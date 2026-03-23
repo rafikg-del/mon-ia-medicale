@@ -27,7 +27,7 @@ GOOGLE_API_KEY   = os.getenv("GOOGLE_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 XAI_API_KEY      = os.getenv("XAI_API_KEY")
 
-GEMINI_MODEL   = "gemini-1.5-pro"
+GEMINI_MODEL   = "gemini-1.5-pro-latest"
 DEEPSEEK_MODEL = "deepseek-reasoner"          # DeepSeek-R1
 GROK_MODEL     = "grok-3"                     # xAI Grok-3
 
@@ -328,12 +328,20 @@ def extract_document(uploaded_file, file_type: str, whisper_size: str = "base") 
 class GeminiAgent:
     def __init__(self):
         import google.generativeai as genai
-        genai.configure(api_key=GOOGLE_API_KEY)
-        self.model = genai.GenerativeModel(GEMINI_MODEL)
+        genai.configure(
+            api_key=GOOGLE_API_KEY,
+            client_options={"api_endpoint": "generativelanguage.googleapis.com"},
+        )
+        # Passe le nom sans préfixe — la lib ajoute "models/" automatiquement
+        self.model = genai.GenerativeModel(model_name=GEMINI_MODEL)
 
     def extract(self, document_text: str) -> str:
         prompt = EXTRACTION_PROMPT.format(document_text=document_text)
-        return self.model.generate_content(prompt).text
+        response = self.model.generate_content(
+            prompt,
+            generation_config={"max_output_tokens": 8192, "temperature": 0.2},
+        )
+        return response.text
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AGENT 2 — DEEPSEEK-R1 (Physiopathologie — Chain-of-Thought)
