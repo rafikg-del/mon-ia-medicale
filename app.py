@@ -1,7 +1,9 @@
 """
-MedFiche AI — Single-file Streamlit app for Streamlit Cloud deployment.
-Architecture : Gemini 1.5 Pro (extraction + critique) × Claude Opus 4.6 (rédaction + révision)
-Consensus en 2 tours. Sidebar chat hybride persistant.
+MedFiche AI — Triple-Agent Architecture
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Agent 1 : Gemini 1.5 Pro   — Extraction OCR + analyse des schémas
+Agent 2 : DeepSeek-R1      — Physiopathologie causale (Chain-of-Thought)
+Agent 3 : Grok-3 (xAI)    — Synthèse finale 10 points + LaTeX + Chat
 """
 
 from __future__ import annotations
@@ -21,165 +23,184 @@ load_dotenv()
 # CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-GOOGLE_API_KEY    = os.getenv("GOOGLE_API_KEY")
-GEMINI_MODEL      = "gemini-1.5-pro"
-CLAUDE_MODEL      = "claude-opus-4-6"
-MAX_DOC_CHARS     = 150_000
-CHAT_CTX_CHARS    = 60_000
+GOOGLE_API_KEY   = os.getenv("GOOGLE_API_KEY")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+XAI_API_KEY      = os.getenv("XAI_API_KEY")
+
+GEMINI_MODEL   = "gemini-1.5-pro"
+DEEPSEEK_MODEL = "deepseek-reasoner"          # DeepSeek-R1
+GROK_MODEL     = "grok-3"                     # xAI Grok-3
+
+MAX_DOC_CHARS  = 150_000
+CHAT_CTX_CHARS =  60_000
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PROMPTS
 # ══════════════════════════════════════════════════════════════════════════════
 
-EXTRACTION_PROMPT = """
-Tu es un agent d'extraction médicale expert. Analyse ce document de manière exhaustive.
+EXTRACTION_PROMPT = """\
+Tu es un agent d'extraction médicale de haut niveau (Gemini 1.5 Pro).
+Exploite ta grande fenêtre de contexte pour analyser ce document de façon EXHAUSTIVE.
 
-Extrais et structure en JSON :
-1. **donnees_brutes** : faits, chiffres, valeurs normales/pathologiques, statistiques
-2. **schemas_causaux** : cascades physiopathologiques complètes (A → B → C → conséquence)
-3. **entites_medicales** : pathologies, médicaments (DCI + posologie), examens, traitements
-4. **sequences_temporelles** : évolution, délais, progression par stades
-5. **points_critiques** : complications, urgences, contre-indications, vigilance
-6. **mnémotechniques** : acronymes, règles mémo, classifications
-7. **algorithmes** : arbres décisionnels, procédures étape par étape
+Extrais et retourne un JSON structuré avec :
+1. "titre"             : titre ou thème principal du cours
+2. "donnees_brutes"    : tous les faits, chiffres, valeurs normales/pathologiques, statistiques
+3. "schemas_causaux"   : cascades mécanistiques complètes (A → B → C → conséquence clinique)
+4. "entites_medicales" : pathologies, médicaments (DCI + posologie si mentionnée), examens, traitements
+5. "sequences"         : évolution temporelle, stades, délais diagnostiques
+6. "points_critiques"  : complications, urgences, contre-indications absolues/relatives
+7. "mnémotechniques"   : acronymes, règles mémo, classifications
+8. "algorithmes"       : arbres décisionnels, procédures étape par étape
 
-Document :
+DOCUMENT :
 ---
 {document_text}
 ---
 
-Retourne un JSON structuré complet. Sois EXHAUSTIF.
+Retourne UNIQUEMENT le JSON. Sois exhaustif — chaque détail alimentera deux autres agents IA.
 """
 
-CRITIQUE_PROMPT = """
-Tu es un agent de validation médicale. Audite cette fiche médicale par rapport aux données sources.
+PHYSIOPATH_PROMPT = """\
+Tu es DeepSeek-R1, un modèle de raisonnement avancé avec Chain-of-Thought profond.
+Ta mission EXCLUSIVE : produire la section "Physiopathologie CAUSALE" la plus rigoureuse possible.
 
-**DONNÉES SOURCES :**
+DONNÉES EXTRAITES PAR GEMINI :
 ```json
 {extracted_data}
 ```
 
-**FICHE À CRITIQUER :**
----
-{fiche_content}
----
+Raisonne étape par étape (tu peux montrer ton processus de réflexion).
+Puis génère la section Physiopathologie en respectant cette structure :
 
-Produis une critique structurée :
+## ⚡ PHYSIOPATHOLOGIE CAUSALE
 
-## OMISSIONS CRITIQUES
-(informations présentes dans les sources mais absentes de la fiche + section cible)
+### 1. Mécanisme déclencheur initial
+[Explique le trigger primaire avec précision moléculaire/cellulaire]
 
-## IMPRÉCISIONS
-(citation du passage imprécis + reformulation correcte)
+### 2. Cascade physiopathologique complète
+Utilise des flèches causales pour chaque maillon :
+- **Étape 1 :** [Trigger] → [Mécanisme moléculaire] → [Effet cellulaire]
+- **Étape 2 :** [Effet cellulaire] → [Réponse tissulaire] → [Conséquence organique]
+- **Étape N :** [...] → [...] → [Manifestation clinique finale]
 
-## ERREURS FACTUELLES
-(erreur exacte + correction sourcée)
+### 3. Schéma logique
+```
+[Cause primaire]
+      ↓
+[Mécanisme A] ──────────────→ [Conséquence latérale A1]
+      ↓                                    ↓
+[Mécanisme B]                    [Amplification A2]
+      ↓
+[Manifestation clinique terminale]
+```
 
-## AMÉLIORATIONS SUGGÉRÉES
-(schémas causaux manquants, mnémotechniques oubliés, etc.)
+### 4. Bottlenecks mécanistiques clés
+| Bottleneck | Mécanisme d'amplification | Cible thérapeutique |
+|------------|--------------------------|---------------------|
+| ...        | ...                      | ...                 |
+
+### 5. Corrélations anatomo-cliniques
+[Lier chaque mécanisme à son expression clinique observable]
+
+Utilise LaTeX pour les constantes : $K_a$, $\Delta G$, $Ca^{2+}$, $HCO_3^-$, etc.
+Pour les équations chimiques : $$CO_2 + H_2O \rightleftharpoons H^+ + HCO_3^-$$
 """
 
-FICHE_DRAFT_PROMPT = """
-Tu es Claude, expert en rédaction médicale structurée.
-Rédige une fiche médicale complète à partir des données extraites ci-dessous.
+SYNTHESIS_PROMPT = """\
+Tu es Grok-3 (xAI), expert en synthèse médicale et rédaction scientifique de précision.
+Tu reçois le travail de deux agents IA spécialisés. Ta mission : produire la fiche médicale finale parfaite.
 
-**RÈGLES DE NOTATION MATHÉMATIQUE ET CHIMIQUE (obligatoires) :**
-- Constantes et valeurs → LaTeX inline `$...$` : $K_a = 10^{{-7}}$, $T_{{1/2}} = 6{{,}}5\\ \\text{{h}}$
-- Équations chimiques → LaTeX display `$$...$$` :
-  $$CO_2 + H_2O \\rightleftharpoons H^+ + HCO_3^-$$
-- Ions dans le texte : $Ca^{{2+}}$, $Na^+$, $HCO_3^-$, $O_2$, $CO_2$
+━━━ ENTRÉE AGENT 1 — Extraction Gemini ━━━
+```json
+{extracted_data}
+```
+
+━━━ ENTRÉE AGENT 2 — Physiopathologie DeepSeek-R1 ━━━
+{physiopath_analysis}
+
+━━━ TA MISSION ━━━
+Synthétise ces deux sources en une fiche médicale complète, rigoureuse et pédagogique.
+La section Physiopathologie est DÉJÀ rédigée par DeepSeek — intègre-la telle quelle (section 1).
+Complète les 9 autres sections avec précision.
+
+RÈGLES LATEX OBLIGATOIRES :
+- Constantes et valeurs → inline : $K_a = 10^{{-7}}$, $T_{{1/2}}$, $\Delta G < 0$
+- Ions dans le texte : $Ca^{{2+}}$, $Na^+$, $Cl^-$, $HCO_3^-$, $O_2$, $CO_2$
+- Équations chimiques → display : $$CO_2 + H_2O \\rightleftharpoons H^+ + HCO_3^-$$
 - Formules de calcul : $$\\text{{Clairance}} = \\frac{{U \\times V}}{{P}}$$
 
-**DONNÉES SOURCES EXTRAITES PAR GEMINI :**
-```json
-{extracted_data}
-```
+━━━ STRUCTURE OBLIGATOIRE EN 10 POINTS ━━━
 
----
+# {title}
 
-## STRUCTURE OBLIGATOIRE EN 10 POINTS
-
-⚠️ La section **Physiopathologie Causale** doit être la PLUS DENSE de toute la fiche.
-
----
-
-# [TITRE : Pathologie / Thème du cours]
-
-> *Résumé en 2-3 phrases de l'essentiel.*
+> *Résumé essentiel en 2-3 phrases — ce qu'il faut retenir absolument.*
 
 ---
 
 ## 1. ⚡ PHYSIOPATHOLOGIE CAUSALE
-*(Section principale — développe TOUTE la cascade mécanistique)*
-
-### Mécanisme déclencheur
-- ...
-
-### Cascade physiopathologique
-- **Étape 1 :** [Trigger] → [Mécanisme moléculaire] → [Effet cellulaire]
-- **Étape 2 :** [Effet cellulaire] → [Réponse tissulaire] → [Manifestation clinique]
-
-### Schéma logique
-```
-[Cause primaire]
-      ↓
-[Mécanisme A] ──→ [Conséquence A1]
-      ↓                    ↓
-[Mécanisme B]       [Conséquence A2]
-      ↓
-[Manifestation clinique finale]
-```
+[INTÈGRE ICI LE CONTENU COMPLET DE DEEPSEEK-R1 SANS MODIFICATION]
 
 ---
 
 ## 2. 🔬 BOTTLENECKS MÉCANISTIQUES
+*(Si déjà dans la section 1, enrichis avec les implications thérapeutiques)*
 
-| Bottleneck | Mécanisme | Conséquence si non bloqué | Intervention thérapeutique |
-|------------|-----------|--------------------------|---------------------------|
+| Bottleneck | Mécanisme | Conséquence si non bloqué | Intervention |
+|------------|-----------|--------------------------|-------------|
 | ... | ... | ... | ... |
 
 ---
 
 ## 3. 🩺 MANIFESTATIONS CLINIQUES
+**Très fréquents (> 50%) :**
+- ...
 
-**Très fréquents (> 50%) :** ...
-**Fréquents (10–50%) :** ...
-**Rares mais importants (< 10%) :** ...
+**Fréquents (10–50%) :**
+- ...
+
+**Rares mais critiques (< 10%) :**
+- ...
 
 ---
 
 ## 4. ⚖️ DIAGNOSTIC DIFFÉRENTIEL
 
-| Pathologie | Argument POUR | Argument CONTRE | Examen discriminant |
-|------------|---------------|-----------------|---------------------|
+| Pathologie | Arguments POUR | Arguments CONTRE | Examen discriminant |
+|------------|----------------|-----------------|---------------------|
 | ... | ... | ... | ... |
 
 ---
 
 ## 5. 🔍 EXAMENS COMPLÉMENTAIRES
 
-**En urgence :** ...
-**Confirmation diagnostique :** ...
-**Bilan de sévérité / suivi :** ...
+**En urgence :**
+- ...
+
+**Confirmation diagnostique :**
+- ...
+
+**Bilan de sévérité / suivi :**
+- ...
 
 ---
 
 ## 6. 💊 TRAITEMENT ÉTIOLOGIQUE
-...
+*(Traiter la cause — DCI, posologie, durée)*
+- ...
 
 ---
 
 ## 7. 🩹 TRAITEMENT SYMPTOMATIQUE
-...
+*(Traiter les symptômes)*
+- ...
 
 ---
 
 ## 8. ⚠️ COMPLICATIONS
-> 🚨 **POINTS DE VIGILANCE CRITIQUES**
+> 🚨 POINTS DE VIGILANCE CRITIQUES
 
 | Complication | Facteurs de risque | Signes d'alarme | Conduite à tenir |
-|--------------|-------------------|-----------------|-----------------|
+|-------------|-------------------|-----------------|-----------------|
 | ... | ... | ... | ... |
 
 **Contre-indications absolues :** ...
@@ -187,7 +208,8 @@ Rédige une fiche médicale complète à partir des données extraites ci-dessou
 ---
 
 ## 9. 📊 PRONOSTIC
-...
+*(Données chiffrées : survie, récidive, guérison — cite les sources si disponibles)*
+- ...
 
 ---
 
@@ -209,746 +231,691 @@ PRÉSENTATION CLINIQUE INITIALE
 
 ## 💡 POINTS CLÉS / MNÉMOTECHNIQUES
 
-**À retenir absolument :** ...
-**Mnémotechnique :** ...
+**À retenir absolument :**
+- ...
+
+**Mnémotechnique :**
+- ...
 
 ---
 
-Rédige la fiche COMPLÈTE en remplaçant tous les "..." par le vrai contenu.
+Rédige la fiche COMPLÈTE. Chaque "..." doit être remplacé par du vrai contenu médical.
 """
 
-FICHE_REVISION_PROMPT = """
-Tu es Claude, expert en rédaction médicale.
-Intègre TOUTES les corrections de l'audit Gemini dans ta fiche.
-Rappel notation : constantes → `$...$`, équations chimiques → `$$...$$`.
+GROK_CHAT_SYSTEM = """\
+Tu es Grok-3 (xAI), assistant médical intégré à MedFiche AI.
+Tu as accès au contenu suivant pour répondre aux questions de l'utilisateur.
 
-**TA FICHE ORIGINALE :**
----
-{original_fiche}
----
+{fiche_block}
 
-**CRITIQUE GEMINI :**
----
-{critique}
----
+{context_block}
 
 Règles :
-1. Corrige toutes les erreurs factuelles
-2. Ajoute toutes les informations manquantes
-3. La Physiopathologie reste la section la plus dense
-4. L'algorithme décisionnel reste en code block
-5. Structure en 10 points inchangée
-
-Retourne la fiche ENTIÈRE et CORRIGÉE.
+- Si l'utilisateur demande un point précis de la fiche (ex: "explique le point 3"), \
+cite directement la section correspondante.
+- Complète avec le cours source si la fiche ne suffit pas.
+- Si une information est absente des deux sources, dis-le clairement.
+- Réponds en français, de façon précise et pédagogique.
+- Utilise LaTeX quand tu cites des constantes ou des équations.
 """
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DOCUMENT EXTRACTION
 # ══════════════════════════════════════════════════════════════════════════════
 
-def extract_from_pdf(file_path: str) -> str:
-    import fitz  # PyMuPDF
-    doc = fitz.open(file_path)
-    text = ""
+def extract_pdf(path: str) -> str:
+    import fitz
+    doc = fitz.open(path)
+    out = ""
     for i, page in enumerate(doc):
-        text += f"\n--- Page {i + 1} ---\n{page.get_text()}"
+        out += f"\n--- Page {i+1} ---\n{page.get_text()}"
     doc.close()
-    return text
+    return out
 
-
-def extract_from_pptx(file_path: str) -> str:
+def extract_pptx(path: str) -> str:
     from pptx import Presentation
-    prs = Presentation(file_path)
-    text = ""
+    prs = Presentation(path)
+    out = ""
     for i, slide in enumerate(prs.slides):
-        text += f"\n--- Slide {i + 1} ---\n"
+        out += f"\n--- Slide {i+1} ---\n"
         if slide.shapes.title:
-            text += f"TITRE: {slide.shapes.title.text}\n"
+            out += f"TITRE: {slide.shapes.title.text}\n"
         for shape in slide.shapes:
             if hasattr(shape, "text") and shape.text.strip() and shape != slide.shapes.title:
-                text += shape.text + "\n"
+                out += shape.text + "\n"
         if slide.has_notes_slide:
             notes = slide.notes_slide.notes_text_frame.text.strip()
             if notes:
-                text += f"[NOTES]: {notes}\n"
-    return text
+                out += f"[NOTES]: {notes}\n"
+    return out
 
-
-def extract_from_docx(file_path: str) -> str:
+def extract_docx(path: str) -> str:
     from docx import Document
-    doc = Document(file_path)
-    text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+    doc = Document(path)
+    out = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
     for table in doc.tables:
-        text += "\n[TABLEAU]\n"
+        out += "\n[TABLEAU]\n"
         for row in table.rows:
-            text += " | ".join(c.text.strip() for c in row.cells) + "\n"
-    return text
-
+            out += " | ".join(c.text.strip() for c in row.cells) + "\n"
+    return out
 
 def transcribe_video(uploaded_file, model_size: str = "base") -> str:
     import whisper
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
         tmp.write(uploaded_file.read())
-        tmp_path = tmp.name
+        path = tmp.name
     try:
         model = whisper.load_model(model_size)
-        result = model.transcribe(tmp_path, language="fr", verbose=False)
-        return result["text"]
+        return model.transcribe(path, language="fr", verbose=False)["text"]
     finally:
-        os.unlink(tmp_path)
-
+        os.unlink(path)
 
 def extract_document(uploaded_file, file_type: str, whisper_size: str = "base") -> str:
-    """Extract text from any supported file type."""
     if file_type == "mp4":
         return transcribe_video(uploaded_file, model_size=whisper_size)
-
     with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_type}") as tmp:
         tmp.write(uploaded_file.read())
-        tmp_path = tmp.name
+        path = tmp.name
     try:
-        extractors = {"pdf": extract_from_pdf, "pptx": extract_from_pptx, "docx": extract_from_docx}
-        return extractors[file_type](tmp_path)
+        return {"pdf": extract_pdf, "pptx": extract_pptx, "docx": extract_docx}[file_type](path)
     finally:
-        os.unlink(tmp_path)
-
+        os.unlink(path)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# GEMINI AGENT
+# AGENT 1 — GEMINI 1.5 PRO (Extraction)
 # ══════════════════════════════════════════════════════════════════════════════
 
 class GeminiAgent:
     def __init__(self):
         import google.generativeai as genai
         genai.configure(api_key=GOOGLE_API_KEY)
-        self._genai = genai
         self.model = genai.GenerativeModel(GEMINI_MODEL)
-        self._chat_session = None
-        self._context_loaded = False
 
-    def extract_data(self, document_text: str) -> str:
+    def extract(self, document_text: str) -> str:
         prompt = EXTRACTION_PROMPT.format(document_text=document_text)
         return self.model.generate_content(prompt).text
 
-    def critique_fiche(self, extracted_data: str, fiche_content: str) -> str:
-        prompt = CRITIQUE_PROMPT.format(
-            extracted_data=extracted_data,
-            fiche_content=fiche_content,
-        )
-        return self.model.generate_content(prompt).text
-
-    def initialize_chat(self, context: str = "", fiche: str = "") -> None:
-        parts = ["Tu es un assistant médical expert (Gemini)."]
-        if fiche:
-            parts.append(
-                "Tu as accès à la FICHE MÉDICALE FINALE validée par consensus.\n"
-                "C'est ta référence prioritaire.\n\n"
-                f"=== FICHE MÉDICALE FINALE ===\n{fiche}\n=== FIN DE LA FICHE ==="
-            )
-        if context:
-            parts.append(
-                "Tu as également accès au cours source.\n\n"
-                f"=== COURS SOURCE ===\n{context[:CHAT_CTX_CHARS]}\n=== FIN DU COURS ==="
-            )
-        if fiche or context:
-            parts.append(
-                "Quand l'utilisateur pose une question sur un point précis de la fiche, "
-                "appuie-toi directement sur la section correspondante. "
-                "Complète avec le cours si nécessaire. "
-                "Si absent des deux, dis-le clairement."
-            )
-        else:
-            parts.append("Réponds aux questions médicales de manière précise et pédagogique.")
-
-        system_ctx = "\n\n".join(parts)
-        ack = (
-            "Compris. J'ai la fiche médicale finale et le cours. Je suis prêt."
-            if (fiche or context) else
-            "Compris. Je suis prêt à répondre."
-        )
-        self._chat_session = self.model.start_chat(history=[
-            {"role": "user",  "parts": [system_ctx]},
-            {"role": "model", "parts": [ack]},
-        ])
-        self._context_loaded = True
-
-    def chat(self, user_message: str, context: str = "", fiche: str = "") -> str:
-        if self._chat_session is None or (not self._context_loaded and (context or fiche)):
-            self.initialize_chat(context, fiche)
-        return self._chat_session.send_message(user_message).text
-
-    def reset_chat(self) -> None:
-        self._chat_session = None
-        self._context_loaded = False
-
-
 # ══════════════════════════════════════════════════════════════════════════════
-# CLAUDE AGENT
+# AGENT 2 — DEEPSEEK-R1 (Physiopathologie — Chain-of-Thought)
 # ══════════════════════════════════════════════════════════════════════════════
 
-class ClaudeAgent:
+class DeepSeekAgent:
     def __init__(self):
-        import anthropic
-        self.client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        self._messages: list[dict] = []
-        self._system_prompt: str = ""
-
-    def _call(self, prompt: str, max_tokens: int = 8192) -> str:
-        msg = self.client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}],
+        from openai import OpenAI
+        self.client = OpenAI(
+            api_key=DEEPSEEK_API_KEY,
+            base_url="https://api.deepseek.com",
         )
-        return msg.content[0].text
 
-    def draft_fiche(self, extracted_data: str) -> str:
-        return self._call(FICHE_DRAFT_PROMPT.format(extracted_data=extracted_data))
+    def reason_physiopath(self, extracted_data: str) -> tuple[str, str]:
+        """
+        Returns (reasoning_trace, physiopath_content).
+        reasoning_trace : le Chain-of-Thought interne de DeepSeek-R1 (si disponible)
+        physiopath_content : la section rédigée
+        """
+        prompt = PHYSIOPATH_PROMPT.format(extracted_data=extracted_data)
+        response = self.client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=8192,
+        )
+        msg = response.choices[0].message
+        # DeepSeek-R1 expose le raisonnement dans reasoning_content (si dispo)
+        reasoning = getattr(msg, "reasoning_content", "") or ""
+        content   = msg.content or ""
+        return reasoning, content
 
-    def revise_fiche(self, original_fiche: str, critique: str) -> str:
-        return self._call(FICHE_REVISION_PROMPT.format(
-            original_fiche=original_fiche,
-            critique=critique,
-        ))
+# ══════════════════════════════════════════════════════════════════════════════
+# AGENT 3 — GROK-3 / xAI (Synthèse finale + Chat)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class GrokAgent:
+    def __init__(self):
+        from openai import OpenAI
+        self.client = OpenAI(
+            api_key=XAI_API_KEY,
+            base_url="https://api.x.ai/v1",
+        )
+        self._messages: list[dict] = []
+        self._system: str = ""
+
+    def synthesize(self, extracted_data: str, physiopath_analysis: str, title: str = "Cours médical") -> str:
+        prompt = SYNTHESIS_PROMPT.format(
+            extracted_data=extracted_data,
+            physiopath_analysis=physiopath_analysis,
+            title=title,
+        )
+        response = self.client.chat.completions.create(
+            model=GROK_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=8192,
+        )
+        return response.choices[0].message.content
+
+    # ── Chat ────────────────────────────────────────────────────────────────
 
     def initialize_chat(self, context: str = "", fiche: str = "") -> None:
         self._messages = []
-        parts = ["Tu es Claude, un expert médical pédagogue."]
-        if fiche:
-            parts.append(
-                "Tu as accès à la FICHE MÉDICALE FINALE validée par consensus.\n"
-                "C'est ta référence prioritaire.\n\n"
-                f"=== FICHE MÉDICALE FINALE ===\n{fiche}\n=== FIN DE LA FICHE ==="
-            )
-        if context:
-            parts.append(
-                "Tu as également accès au cours source.\n\n"
-                f"=== COURS SOURCE ===\n{context[:CHAT_CTX_CHARS]}\n=== FIN DU COURS ==="
-            )
-        if fiche or context:
-            parts.append(
-                "Quand l'utilisateur pose une question sur un point précis de la fiche, "
-                "appuie-toi directement sur la section correspondante. "
-                "Complète avec le cours si nécessaire. "
-                "Si absent des deux, dis-le clairement."
-            )
-        else:
-            parts.append("Réponds aux questions médicales de manière précise et structurée.")
-        self._system_prompt = "\n\n".join(parts)
+        fiche_block = (
+            f"=== FICHE MÉDICALE FINALE (référence prioritaire) ===\n{fiche}\n=== FIN ==="
+            if fiche else "Aucune fiche générée pour l'instant."
+        )
+        context_block = (
+            f"=== COURS SOURCE (complément) ===\n{context[:CHAT_CTX_CHARS]}\n=== FIN ==="
+            if context else ""
+        )
+        self._system = GROK_CHAT_SYSTEM.format(
+            fiche_block=fiche_block,
+            context_block=context_block,
+        )
 
     def chat(self, user_message: str, context: str = "", fiche: str = "") -> str:
-        if not self._system_prompt and (context or fiche):
+        if not self._system:
             self.initialize_chat(context, fiche)
         self._messages.append({"role": "user", "content": user_message})
-        msg = self.client.messages.create(
-            model=CLAUDE_MODEL,
+        response = self.client.chat.completions.create(
+            model=GROK_MODEL,
+            messages=[{"role": "system", "content": self._system}] + self._messages,
             max_tokens=4096,
-            system=self._system_prompt or "Tu es un expert médical pédagogue.",
-            messages=self._messages,
         )
-        response = msg.content[0].text
-        self._messages.append({"role": "assistant", "content": response})
-        return response
+        reply = response.choices[0].message.content
+        self._messages.append({"role": "assistant", "content": reply})
+        return reply
 
     def reset_chat(self) -> None:
         self._messages = []
-        self._system_prompt = ""
-
+        self._system   = ""
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CONSENSUS WORKFLOW
+# PIPELINE TRIPLE-AGENT
 # ══════════════════════════════════════════════════════════════════════════════
 
-def run_consensus(
+def run_triple_pipeline(
     document_text: str,
     progress_callback: Optional[Callable[[float, str], None]] = None,
 ) -> dict:
     """
-    2-turn consensus workflow:
-      Tour 1 : Gemini extrait → Claude rédige
-      Tour 2 : Gemini critique → Claude corrige
+    Séquence :
+      1. Gemini  → extraction JSON exhaustive
+      2. DeepSeek-R1 → physiopathologie causale (CoT)
+      3. Grok-3  → synthèse fiche complète 10 points
     """
-    def _p(v, msg):
+    def _p(v: float, msg: str) -> None:
         if progress_callback:
             progress_callback(v, msg)
 
+    # ── Agent 1 : Gemini ──────────────────────────────────────────────────
+    _p(0.05, "🔍 Agent 1 — Gemini 1.5 Pro extrait le corpus et analyse les schémas...")
     gemini = GeminiAgent()
-    claude = ClaudeAgent()
+    extracted_data = gemini.extract(document_text)
+    _p(0.28, "✅ Agent 1 terminé — Données structurées prêtes.")
 
-    _p(0.10, "🔍 Tour 1 — Gemini analyse et extrait les données brutes...")
-    extracted_data = gemini.extract_data(document_text)
+    # ── Agent 2 : DeepSeek-R1 ────────────────────────────────────────────
+    _p(0.32, "🧠 Agent 2 — DeepSeek-R1 raisonne sur la physiopathologie causale...")
+    deepseek = DeepSeekAgent()
+    reasoning_trace, physiopath = deepseek.reason_physiopath(extracted_data)
+    _p(0.62, "✅ Agent 2 terminé — Physiopathologie causale rédigée.")
 
-    _p(0.35, "✍️ Tour 1 — Claude rédige la fiche médicale en 10 points...")
-    draft_fiche = claude.draft_fiche(extracted_data)
+    # ── Titre extrait pour Grok ──────────────────────────────────────────
+    import json, re as _re
+    title = "Cours médical"
+    try:
+        raw = _re.search(r'\{.*\}', extracted_data, _re.DOTALL)
+        if raw:
+            data = json.loads(raw.group())
+            title = data.get("titre", title)
+    except Exception:
+        pass
 
-    _p(0.62, "🔬 Tour 2 — Gemini valide et critique la fiche...")
-    critique = gemini.critique_fiche(extracted_data, draft_fiche)
+    # ── Agent 3 : Grok-3 ─────────────────────────────────────────────────
+    _p(0.66, "✨ Agent 3 — Grok-3 synthétise la fiche finale et optimise le LaTeX...")
+    grok = GrokAgent()
+    final_fiche = grok.synthesize(extracted_data, physiopath, title=title)
+    _p(1.0, "🏁 Triplette terminée — Fiche validée par les 3 agents !")
 
-    _p(0.85, "📝 Tour 2 — Claude intègre les corrections et finalise...")
-    final_fiche = claude.revise_fiche(draft_fiche, critique)
-
-    _p(1.0, "✅ Consensus terminé — Fiche médicale validée !")
     return {
-        "extracted_data": extracted_data,
-        "draft_fiche":    draft_fiche,
-        "critique":       critique,
-        "final_fiche":    final_fiche,
+        "extracted_data"  : extracted_data,
+        "reasoning_trace" : reasoning_trace,
+        "physiopath"      : physiopath,
+        "final_fiche"     : final_fiche,
+        "title"           : title,
     }
 
-
 # ══════════════════════════════════════════════════════════════════════════════
-# UI HELPERS
+# HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
-_DISPLAY_MATH_RE = re.compile(r'\$\$(.+?)\$\$', re.DOTALL)
-
+_DISPLAY_MATH = re.compile(r'\$\$(.+?)\$\$', re.DOTALL)
 
 def render_with_latex(content: str) -> None:
-    """
-    Render markdown with full LaTeX support:
-    - $$...$$ → st.latex() (KaTeX display, crisp)
-    - Rest    → st.markdown() (handles $...$ inline via KaTeX)
-    Splitting on $$ prevents Streamlit from swallowing display math
-    when mixed with fenced code blocks (algorithme décisionnel).
-    """
-    parts = _DISPLAY_MATH_RE.split(content)
-    for i, part in enumerate(parts):
+    """$$...$$ → st.latex()  |  reste → st.markdown() (gère $...$ inline)."""
+    for i, part in enumerate(_DISPLAY_MATH.split(content)):
         if i % 2 == 0:
             if part.strip():
                 st.markdown(part)
         else:
             st.latex(part.strip())
 
-
-def file_hash(uploaded_file) -> str:
-    uploaded_file.seek(0)
-    h = hashlib.md5(uploaded_file.read()).hexdigest()
-    uploaded_file.seek(0)
+def file_hash(f) -> str:
+    f.seek(0); h = hashlib.md5(f.read()).hexdigest(); f.seek(0)
     return h
 
+def ctx_hash(t: str) -> str:
+    return str(hash(t[:500])) if t else ""
 
-def format_size(n: int) -> str:
-    for unit in ["B", "KB", "MB", "GB"]:
-        if n < 1024:
-            return f"{n:.1f} {unit}"
+def fmt_size(n: int) -> str:
+    for u in ["B","KB","MB","GB"]:
+        if n < 1024: return f"{n:.1f} {u}"
         n //= 1024
     return f"{n:.1f} TB"
-
-
-def context_hash(text: str) -> str:
-    return str(hash(text[:500])) if text else ""
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CSS
 # ══════════════════════════════════════════════════════════════════════════════
 
-GLOBAL_CSS = """
+CSS = """
 <style>
-    .main-header {
-        background: linear-gradient(135deg, #0D47A1 0%, #4A148C 100%);
-        padding: 24px 30px; border-radius: 14px; margin-bottom: 24px;
-        box-shadow: 0 8px 30px rgba(13,71,161,0.35);
-    }
-    .main-header h1 { color: white; margin: 0; font-size: 30px; }
-    .main-header .sub { color: rgba(255,255,255,0.7); margin: 8px 0 0 0; font-size: 13px; }
-    .main-header .badges { margin-top: 12px; display: flex; gap: 8px; }
-    .badge { display:inline-block; padding:3px 10px; border-radius:12px;
-             font-size:11px; font-weight:600; color:white; }
-    .badge.g { background: rgba(52,168,83,0.85); }
-    .badge.c { background: rgba(100,100,255,0.85); }
-    .badge.x { background: rgba(255,255,255,0.2); }
+/* ── Header ── */
+.hdr{background:linear-gradient(135deg,#0a0a23 0%,#1a0533 50%,#001a33 100%);
+     padding:26px 32px;border-radius:16px;margin-bottom:24px;
+     box-shadow:0 8px 32px rgba(0,0,0,0.5);}
+.hdr h1{color:#fff;margin:0;font-size:28px;letter-spacing:-0.5px;}
+.hdr .sub{color:rgba(255,255,255,0.6);margin:8px 0 0;font-size:13px;}
+.hdr .agents{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;}
+.ag{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;
+    border-radius:20px;font-size:12px;font-weight:600;color:#fff;}
+.ag1{background:linear-gradient(90deg,#1a73e8,#0d47a1);}
+.ag2{background:linear-gradient(90deg,#00bcd4,#006064);}
+.ag3{background:linear-gradient(90deg,#7c4dff,#311b92);}
 
-    .step-box {
-        background:#E8EAF6; border-left:4px solid #3F51B5;
-        padding:10px 16px; border-radius:0 8px 8px 0;
-        margin:12px 0; font-size:14px; color:#1A237E; font-weight:600;
-    }
-    .api-warn {
-        background:#FFF3E0; border:2px solid #FF9800; border-radius:10px;
-        padding:16px 20px; margin:10px 0; font-size:14px;
-    }
-    .consensus-badge {
-        display:inline-flex; align-items:center; gap:8px;
-        background:linear-gradient(90deg,#00897B,#00ACC1);
-        color:white; padding:6px 14px; border-radius:20px;
-        font-size:13px; font-weight:600; margin-bottom:18px;
-        box-shadow:0 2px 8px rgba(0,137,123,0.35);
-    }
-    .compare-label {
-        background:#E8EAF6; border-radius:8px; padding:8px 14px;
-        font-weight:700; font-size:14px; color:#3F51B5;
-        margin-bottom:12px; text-align:center;
-    }
-    .compare-label.fin { background:#E8F5E9; color:#2E7D32; }
+/* ── Step box ── */
+.step{background:#e8eaf6;border-left:4px solid #3f51b5;padding:10px 16px;
+      border-radius:0 8px 8px 0;margin:12px 0;font-size:14px;
+      color:#1a237e;font-weight:600;}
 
-    #MainMenu { visibility:hidden; }
-    footer     { visibility:hidden; }
+/* ── Agent progress cards ── */
+.agent-card{border-radius:10px;padding:14px 18px;margin:8px 0;
+            display:flex;align-items:center;gap:12px;font-size:14px;}
+.agent-card.a1{background:#e3f2fd;border-left:4px solid #1565c0;}
+.agent-card.a2{background:#e0f7fa;border-left:4px solid #00838f;}
+.agent-card.a3{background:#ede7f6;border-left:4px solid #6a1b9a;}
+.agent-card .ico{font-size:22px;}
+.agent-card .lbl{font-weight:700;}
+.agent-card .sub{font-size:12px;color:#666;margin-top:2px;}
+
+/* ── Fiche badge ── */
+.fbadge{display:inline-flex;align-items:center;gap:8px;
+        background:linear-gradient(90deg,#1a73e8,#7c4dff);
+        color:#fff;padding:6px 16px;border-radius:20px;
+        font-size:13px;font-weight:600;margin-bottom:18px;
+        box-shadow:0 2px 10px rgba(124,77,255,0.4);}
+
+/* ── Compare labels ── */
+.clbl{background:#e8eaf6;border-radius:8px;padding:8px 14px;
+      font-weight:700;font-size:13px;color:#3f51b5;
+      margin-bottom:10px;text-align:center;}
+.clbl.fin{background:#e8f5e9;color:#2e7d32;}
+
+/* ── API warning ── */
+.api-warn{background:#fff3e0;border:2px solid #ff9800;border-radius:10px;
+          padding:16px 20px;margin:10px 0;font-size:14px;}
+
+/* ── Sidebar ── */
+.sb-hdr{background:linear-gradient(135deg,#0a0a23,#1a0533);
+        padding:16px 18px;border-radius:12px;margin-bottom:14px;}
+
+#MainMenu,footer{visibility:hidden;}
 </style>
 """
 
-
 # ══════════════════════════════════════════════════════════════════════════════
-# UI — UPLOAD MODULE
+# UI — UPLOAD
 # ══════════════════════════════════════════════════════════════════════════════
 
 def render_upload() -> tuple[Optional[str], Optional[str]]:
     st.markdown("""
-    <div style="background:linear-gradient(135deg,#1565C0,#4A148C);
-                padding:20px 25px;border-radius:12px;margin-bottom:20px;
-                box-shadow:0 4px 15px rgba(21,101,192,0.3);">
-        <h3 style="color:white;margin:0;font-size:20px;">📁 Importer votre cours</h3>
-        <p style="color:rgba(255,255,255,0.75);margin:6px 0 0 0;font-size:13px;">
-            Formats supportés : PDF · PPTX · DOCX · MP4
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+    <div style="background:linear-gradient(135deg,#1565c0,#4a148c);
+                padding:20px 25px;border-radius:12px;margin-bottom:20px;">
+        <h3 style="color:#fff;margin:0;font-size:20px;">📁 Importer votre cours</h3>
+        <p style="color:rgba(255,255,255,0.7);margin:6px 0 0;font-size:13px;">
+            PDF · PPTX · DOCX · MP4</p>
+    </div>""", unsafe_allow_html=True)
 
     uploaded = st.file_uploader(
-        "Glissez-déposez ou sélectionnez un fichier",
-        type=["pdf", "pptx", "docx", "mp4"],
+        "Fichier", type=["pdf","pptx","docx","mp4"],
         label_visibility="collapsed",
     )
 
-    if uploaded is None:
+    if not uploaded:
         st.markdown("""
-        <div style="border:2px dashed #90CAF9;border-radius:10px;padding:30px;
-                    text-align:center;color:#5C6BC0;background:#F8F9FF;margin-top:10px;">
-            <div style="font-size:40px;">📂</div>
+        <div style="border:2px dashed #90caf9;border-radius:10px;padding:30px;
+                    text-align:center;color:#5c6bc0;background:#f8f9ff;">
+            <div style="font-size:36px;">📂</div>
             <div style="font-size:15px;margin-top:8px;">Aucun fichier sélectionné</div>
-            <div style="font-size:12px;margin-top:4px;color:#9E9E9E;">
-                PDF · PowerPoint · Word · Vidéo MP4</div>
-        </div>
-        """, unsafe_allow_html=True)
+        </div>""", unsafe_allow_html=True)
         return None, None
 
-    file_type = uploaded.name.split(".")[-1].lower()
-
+    ftype = uploaded.name.split(".")[-1].lower()
     st.markdown(f"""
-    <div style="background:#E8F5E9;border-left:4px solid #43A047;
+    <div style="background:#e8f5e9;border-left:4px solid #43a047;
                 border-radius:0 8px 8px 0;padding:10px 15px;margin:10px 0;
-                font-size:14px;color:#1B5E20;">
-        📄 <b>{uploaded.name}</b> — {format_size(uploaded.size)} — <code>.{file_type}</code>
-    </div>
-    """, unsafe_allow_html=True)
+                font-size:14px;color:#1b5e20;">
+        📄 <b>{uploaded.name}</b> — {fmt_size(uploaded.size)} — <code>.{ftype}</code>
+    </div>""", unsafe_allow_html=True)
 
-    # Whisper quality selector BEFORE processing (outside spinner)
+    # Whisper selector AVANT le spinner
     whisper_size = "base"
-    if file_type == "mp4":
+    if ftype == "mp4":
         whisper_size = st.selectbox(
-            "Qualité de transcription Whisper",
-            options=["tiny", "base", "small", "medium"],
-            index=1,
-            help="Plus le modèle est grand, plus la transcription est précise mais lente.",
+            "Qualité Whisper",
+            ["tiny","base","small","medium"], index=1,
+            help="tiny=rapide, medium=précis mais lent",
         )
 
-    # Cache by (file_hash + whisper_size) — avoids re-extraction on every Streamlit rerun
-    fh = file_hash(uploaded)
-    cache_key = f"extracted_{fh}_{whisper_size}"
+    # Cache par hash — évite toute ré-extraction au rerun
+    fh        = file_hash(uploaded)
+    cache_key = f"doc_{fh}_{whisper_size}"
 
     if cache_key in st.session_state:
         text = st.session_state[cache_key]
     else:
-        if file_type == "mp4":
-            with st.spinner("🎙️ Transcription Whisper en cours (peut prendre plusieurs minutes)..."):
+        if ftype == "mp4":
+            with st.spinner("🎙️ Transcription Whisper en cours..."):
                 text = transcribe_video(uploaded, model_size=whisper_size)
         else:
             with st.spinner("Lecture du fichier..."):
-                text = extract_document(uploaded, file_type)
+                text = extract_document(uploaded, ftype)
         st.session_state[cache_key] = text
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Caractères", f"{len(text):,}")
     c2.metric("Mots",       f"{len(text.split()):,}")
-    c3.metric("Tokens (~)", f"{len(text) // 4:,}")
+    c3.metric("Tokens (~)", f"{len(text)//4:,}")
 
     with st.expander("👁️ Aperçu", expanded=False):
         st.text(text[:3000] + ("..." if len(text) > 3000 else ""))
 
     return text, uploaded.name
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # UI — FICHE DISPLAY
 # ══════════════════════════════════════════════════════════════════════════════
 
-FICHE_CSS = """
-<style>
-    .compare-label      { background:#E8EAF6; border-radius:8px; padding:8px 14px;
-                          font-weight:700; font-size:14px; color:#3F51B5;
-                          margin-bottom:12px; text-align:center; }
-    .compare-label.fin  { background:#E8F5E9; color:#2E7D32; }
-    .critique-box       { background:#FFF8E1; border-left:5px solid #F9A825;
-                          border-radius:0 10px 10px 0; padding:14px 18px; margin:10px 0; }
-    .critique-box .lbl  { font-weight:700; color:#E65100; font-size:15px; margin-bottom:8px; }
-</style>
-"""
-
-
 def render_fiche(content: str, badge: bool = True) -> None:
-    st.markdown(FICHE_CSS, unsafe_allow_html=True)
     if badge:
         st.markdown(
-            '<div class="consensus-badge">'
-            '✅ Validé par consensus Gemini 1.5 Pro × Claude Opus — 2 tours'
-            '</div>',
+            '<div class="fbadge">🤖 Gemini · DeepSeek-R1 · Grok-3 — Triple consensus</div>',
             unsafe_allow_html=True,
         )
     render_with_latex(content)
 
-
 def render_comparison(draft: str, final: str) -> None:
-    st.markdown(FICHE_CSS, unsafe_allow_html=True)
-    col1, col2 = st.columns(2, gap="medium")
-    with col1:
-        st.markdown('<div class="compare-label">📄 Brouillon — Tour 1</div>',
+    c1, c2 = st.columns(2, gap="medium")
+    with c1:
+        st.markdown('<div class="clbl">🧠 DeepSeek-R1 Physiopath + brouillon Grok</div>',
                     unsafe_allow_html=True)
         with st.container(border=True):
             render_with_latex(draft)
-    with col2:
-        st.markdown('<div class="compare-label fin">✅ Version Finale — Tour 2</div>',
+    with c2:
+        st.markdown('<div class="clbl fin">✅ Fiche Finale — Triple Agent</div>',
                     unsafe_allow_html=True)
         with st.container(border=True):
             render_with_latex(final)
 
-
-def render_critique(critique: str) -> None:
-    st.markdown(FICHE_CSS, unsafe_allow_html=True)
-    st.markdown("""
-    <div class="critique-box">
-        <div class="lbl">🔬 Critique Gemini — Tour 2</div>
-    </div>
-    """, unsafe_allow_html=True)
-    render_with_latex(critique)
-
-
 # ══════════════════════════════════════════════════════════════════════════════
-# UI — SIDEBAR CHAT
+# UI — PROGRESS PANEL
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _init_chat_state() -> None:
-    if "gemini_agent"         not in st.session_state:
-        st.session_state.gemini_agent = GeminiAgent()
-    if "claude_agent"         not in st.session_state:
-        st.session_state.claude_agent = ClaudeAgent()
-    if "chat_messages"        not in st.session_state:
-        st.session_state.chat_messages = []
-    if "chat_doc_hash"        not in st.session_state:
-        st.session_state.chat_doc_hash = ""
-    if "chat_fiche_hash"      not in st.session_state:
-        st.session_state.chat_fiche_hash = ""
+def render_agent_progress(active: int) -> None:
+    """Affiche 3 cartes agents avec l'agent actif mis en évidence."""
+    agents = [
+        ("a1", "🔍", "Agent 1 — Gemini 1.5 Pro",    "Extraction OCR + analyse des schémas"),
+        ("a2", "🧠", "Agent 2 — DeepSeek-R1",         "Physiopathologie causale (Chain-of-Thought)"),
+        ("a3", "✨", "Agent 3 — Grok-3",              "Synthèse finale 10 points + LaTeX"),
+    ]
+    for i, (cls, ico, lbl, sub) in enumerate(agents, 1):
+        status = "⏳ En cours..." if i == active else ("✅ Terminé" if i < active else "⌛ En attente")
+        opacity = "1" if i <= active else "0.4"
+        st.markdown(f"""
+        <div class="agent-card {cls}" style="opacity:{opacity};">
+            <div class="ico">{ico}</div>
+            <div>
+                <div class="lbl">{lbl}</div>
+                <div class="sub">{sub} — {status}</div>
+            </div>
+        </div>""", unsafe_allow_html=True)
 
+# ══════════════════════════════════════════════════════════════════════════════
+# UI — SIDEBAR CHAT (Grok-3)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _init_chat() -> None:
+    defaults = {
+        "grok_agent"      : None,
+        "chat_messages"   : [],
+        "chat_doc_hash"   : "",
+        "chat_fiche_hash" : "",
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+def _get_grok() -> GrokAgent:
+    if st.session_state.grok_agent is None:
+        st.session_state.grok_agent = GrokAgent()
+    return st.session_state.grok_agent
 
 def render_sidebar(document_context: str = "", final_fiche: str = "") -> None:
-    _init_chat_state()
+    _init_chat()
 
-    # Auto-reinitialize agents when context changes (e.g. fiche generated after doc upload)
-    doc_h   = context_hash(document_context)
-    fiche_h = context_hash(final_fiche)
-    if (doc_h != st.session_state.chat_doc_hash or
-            fiche_h != st.session_state.chat_fiche_hash) and (document_context or final_fiche):
-        st.session_state.gemini_agent.initialize_chat(document_context, final_fiche)
-        st.session_state.claude_agent.initialize_chat(document_context, final_fiche)
-        st.session_state.chat_doc_hash   = doc_h
-        st.session_state.chat_fiche_hash = fiche_h
+    dh = ctx_hash(document_context)
+    fh = ctx_hash(final_fiche)
+    if dh != st.session_state.chat_doc_hash or fh != st.session_state.chat_fiche_hash:
+        if document_context or final_fiche:
+            _get_grok().initialize_chat(document_context, final_fiche)
+            st.session_state.chat_doc_hash   = dh
+            st.session_state.chat_fiche_hash = fh
+
+    status = (
+        "✅ Fiche + cours chargés" if final_fiche
+        else ("📄 Cours chargé" if document_context else "Aucun contexte")
+    )
 
     with st.sidebar:
-        status = (
-            "✅ Fiche + cours chargés" if final_fiche
-            else ("📄 Cours chargé" if document_context else "Aucun contexte")
-        )
         st.markdown(f"""
-        <div style="background:linear-gradient(135deg,#1A237E,#4A148C);
-                    padding:16px 18px;border-radius:12px;margin-bottom:14px;">
-            <div style="color:white;font-size:18px;font-weight:700;">🧠 Assistant Hybride</div>
-            <div style="color:rgba(255,255,255,0.65);font-size:12px;margin-top:4px;">
-                Gemini 1.5 Pro × Claude Opus 4.6</div>
-            <div style="color:rgba(255,255,255,0.5);font-size:11px;">{status}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        llm_mode = st.radio(
-            "Mode de réponse",
-            ["🔵 Claude Opus", "🟢 Gemini Pro", "🟣 Consensus (les deux)"],
-            index=2,
-        )
+        <div class="sb-hdr">
+            <div style="color:#fff;font-size:18px;font-weight:700;">
+                ✨ Grok-3 — Assistant
+            </div>
+            <div style="color:rgba(255,255,255,0.6);font-size:12px;margin-top:4px;">
+                xAI · Basé sur votre fiche médicale
+            </div>
+            <div style="color:rgba(255,255,255,0.4);font-size:11px;">{status}</div>
+        </div>""", unsafe_allow_html=True)
 
         if not document_context and not final_fiche:
-            st.warning("⚠️ Importez un document pour activer l'assistant.")
+            st.warning("⚠️ Importez un document pour activer Grok-3.")
         elif not final_fiche:
-            st.info("💡 Générez une fiche pour des réponses encore plus précises.")
+            st.info("💡 Générez une fiche pour des réponses sur-mesure.")
         else:
-            st.success("🎯 Fiche + cours chargés.")
+            st.success("🎯 Grok-3 a accès à votre fiche médicale.")
 
         st.divider()
 
-        # Chat history
+        # Historique
         for msg in st.session_state.chat_messages:
             if msg["role"] == "user":
                 st.markdown(f"""
-                <div style="background:#E3F2FD;border-radius:10px 10px 2px 10px;
-                            padding:10px 13px;margin:6px 0;font-size:13px;color:#0D47A1;">
-                    👤 <b>Vous</b><br>{msg['content']}</div>
-                """, unsafe_allow_html=True)
+                <div style="background:#e3f2fd;border-radius:10px 10px 2px 10px;
+                            padding:10px 13px;margin:6px 0;font-size:13px;color:#0d47a1;">
+                    👤 <b>Vous</b><br>{msg['content']}
+                </div>""", unsafe_allow_html=True)
             else:
-                model = msg.get("model", "Assistant")
-                icon  = "🔵" if "Claude" in model else ("🟢" if "Gemini" in model else "🟣")
-                bg    = "#F3E5F5" if "Consensus" in model else ("#E8F5E9" if "Gemini" in model else "#EDE7F6")
-                col   = "#4A148C" if "Consensus" in model else ("#1B5E20" if "Gemini" in model else "#311B92")
                 st.markdown(f"""
-                <div style="background:{bg};border-radius:10px 10px 10px 2px;
-                            padding:10px 13px;margin:6px 0;font-size:13px;color:{col};">
-                    {icon} <b>{model}</b></div>
-                """, unsafe_allow_html=True)
+                <div style="background:#ede7f6;border-radius:10px 10px 10px 2px;
+                            padding:10px 13px;margin:4px 0;font-size:13px;color:#311b92;">
+                    ✨ <b>Grok-3</b>
+                </div>""", unsafe_allow_html=True)
                 st.markdown(msg["content"])
 
         # Input
         user_input = st.chat_input("Posez une question sur le cours...")
         if user_input:
             st.session_state.chat_messages.append({"role": "user", "content": user_input})
-
-            with st.spinner("Réflexion en cours..."):
-                if "Claude" in llm_mode:
-                    resp  = st.session_state.claude_agent.chat(user_input, document_context, final_fiche)
-                    model = "Claude Opus"
-                elif "Gemini" in llm_mode:
-                    resp  = st.session_state.gemini_agent.chat(user_input, document_context, final_fiche)
-                    model = "Gemini Pro"
-                else:
-                    cr = st.session_state.claude_agent.chat(user_input, document_context, final_fiche)
-                    gr = st.session_state.gemini_agent.chat(user_input, document_context, final_fiche)
-                    resp  = f"**🔵 Claude Opus :**\n\n{cr}\n\n---\n\n**🟢 Gemini Pro :**\n\n{gr}"
-                    model = "Consensus"
-
-            st.session_state.chat_messages.append({"role": "assistant", "content": resp, "model": model})
+            with st.spinner("Grok-3 réfléchit..."):
+                reply = _get_grok().chat(user_input, document_context, final_fiche)
+            st.session_state.chat_messages.append({"role": "assistant", "content": reply})
             st.rerun()
 
-        # Clear
         if st.session_state.chat_messages:
             st.divider()
             if st.button("🗑️ Effacer le chat", use_container_width=True):
-                st.session_state.chat_messages  = []
-                st.session_state.gemini_agent   = GeminiAgent()
-                st.session_state.claude_agent   = ClaudeAgent()
-                st.session_state.chat_doc_hash  = ""
+                st.session_state.chat_messages   = []
+                st.session_state.grok_agent      = None
+                st.session_state.chat_doc_hash   = ""
                 st.session_state.chat_fiche_hash = ""
                 st.rerun()
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN APP
 # ══════════════════════════════════════════════════════════════════════════════
 
 st.set_page_config(
-    page_title="MedFiche AI — Gemini × Claude",
+    page_title="MedFiche AI — Triple Agent",
     page_icon="🏥",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+st.markdown(CSS, unsafe_allow_html=True)
 
-st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
-
+# ── Header ────────────────────────────────────────────────────────────────────
 st.markdown("""
-<div class="main-header">
+<div class="hdr">
     <h1>🏥 MedFiche AI</h1>
-    <p class="sub">Génération de fiches médicales par consensus d'intelligence artificielle</p>
-    <div class="badges">
-        <span class="badge g">🟢 Gemini 1.5 Pro — Extraction & Validation</span>
-        <span class="badge c">🔵 Claude Opus 4.6 — Rédaction médicale</span>
-        <span class="badge x">⚡ Consensus 2 tours</span>
+    <p class="sub">Fiches médicales par consensus de trois intelligences artificielles spécialisées</p>
+    <div class="agents">
+        <span class="ag ag1">🔍 Agent 1 — Gemini 1.5 Pro · Extraction</span>
+        <span class="ag ag2">🧠 Agent 2 — DeepSeek-R1 · Raisonnement</span>
+        <span class="ag ag3">✨ Agent 3 — Grok-3 · Synthèse & Chat</span>
     </div>
-</div>
-""", unsafe_allow_html=True)
+</div>""", unsafe_allow_html=True)
 
-# API guard
-missing = [k for k, v in {"ANTHROPIC_API_KEY": ANTHROPIC_API_KEY,
-                           "GOOGLE_API_KEY": GOOGLE_API_KEY}.items() if not v]
-if missing:
+# ── API guard ─────────────────────────────────────────────────────────────────
+missing = {
+    "GOOGLE_API_KEY"  : GOOGLE_API_KEY,
+    "DEEPSEEK_API_KEY": DEEPSEEK_API_KEY,
+    "XAI_API_KEY"     : XAI_API_KEY,
+}
+missing_keys = [k for k, v in missing.items() if not v]
+if missing_keys:
     st.markdown(
-        f'<div class="api-warn">⚠️ <b>Clés API manquantes :</b> '
-        f'{", ".join(f"<code>{k}</code>" for k in missing)}<br><br>'
-        f'Ajoutez-les dans les <b>Secrets</b> Streamlit Cloud '
-        f'(Settings → Secrets) ou dans un fichier <code>.env</code> local.</div>',
+        '<div class="api-warn">⚠️ <b>Clés API manquantes :</b> '
+        + ", ".join(f"<code>{k}</code>" for k in missing_keys)
+        + "<br><br>Ajoutez-les dans <b>Streamlit Cloud → Settings → Secrets</b> "
+        "ou dans votre fichier <code>.env</code> local.</div>",
         unsafe_allow_html=True,
     )
     st.stop()
 
-# Session state
-for key, default in [
+# ── Session state ─────────────────────────────────────────────────────────────
+for key, val in [
     ("document_text", None), ("file_name", None),
     ("results", None),       ("generating", False),
+    ("active_agent", 0),
 ]:
     if key not in st.session_state:
-        st.session_state[key] = default
+        st.session_state[key] = val
 
-# Sidebar (persistent across all tabs)
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 _fiche = (st.session_state.results or {}).get("final_fiche", "") or ""
 render_sidebar(
     document_context=st.session_state.document_text or "",
     final_fiche=_fiche,
 )
 
-# Tabs
-tab1, tab2, tab3 = st.tabs(["📁 Import & Génération", "📋 Fiche Finale", "🔬 Détails du Consensus"])
+# ── Tabs ──────────────────────────────────────────────────────────────────────
+tab1, tab2, tab3 = st.tabs([
+    "📁 Import & Génération",
+    "📋 Fiche Finale",
+    "🔬 Détails des Agents",
+])
 
-# ── TAB 1 ─────────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════
+# TAB 1
+# ════════════════════════════════════════════════════════════════════════
 with tab1:
     doc_text, file_name = render_upload()
 
     if doc_text:
-        # Truncate and store
         truncated = doc_text[:MAX_DOC_CHARS] + (
-            "\n\n[... CONTENU TRONQUÉ — limite de tokens atteinte ...]"
-            if len(doc_text) > MAX_DOC_CHARS else ""
+            "\n\n[... CONTENU TRONQUÉ ...]" if len(doc_text) > MAX_DOC_CHARS else ""
         )
         st.session_state.document_text = truncated
         st.session_state.file_name     = file_name
         st.markdown(
-            f'<div class="step-box">✅ Document prêt — ~{len(truncated) // 4:,} tokens estimés. '
-            'Cliquez sur "Générer" pour lancer le consensus.</div>',
+            f'<div class="step">✅ Document prêt — ~{len(truncated)//4:,} tokens. '
+            'Lancez la génération par la Triplette.</div>',
             unsafe_allow_html=True,
         )
 
     if st.session_state.document_text:
         col_btn, _ = st.columns([2, 3])
         with col_btn:
-            generate = st.button(
-                "🚀 Générer la fiche médicale",
+            go = st.button(
+                "🚀 Lancer la Triplette Médicale",
                 type="primary",
                 use_container_width=True,
                 disabled=st.session_state.generating,
             )
 
-        if generate:
-            st.session_state.generating = True
-            bar      = st.progress(0.0)
-            status   = st.empty()
+        if go:
+            st.session_state.generating   = True
+            st.session_state.active_agent = 1
+
+            progress_bar      = st.progress(0.0)
+            status_placeholder = st.empty()
+            agents_placeholder = st.empty()
 
             def _upd(v: float, msg: str) -> None:
-                bar.progress(v)
-                status.markdown(f'<div class="step-box">{msg}</div>', unsafe_allow_html=True)
+                progress_bar.progress(v)
+                status_placeholder.markdown(
+                    f'<div class="step">{msg}</div>', unsafe_allow_html=True
+                )
+                # Déduire l'agent actif depuis la progression
+                active = 1 if v < 0.30 else (2 if v < 0.65 else 3)
+                with agents_placeholder.container():
+                    render_agent_progress(active)
 
             try:
-                results = run_consensus(st.session_state.document_text, _upd)
+                results = run_triple_pipeline(
+                    st.session_state.document_text,
+                    progress_callback=_upd,
+                )
                 st.session_state.results    = results
                 st.session_state.generating = False
-                status.success("🎉 Fiche générée ! Consultez l'onglet **Fiche Finale**.")
+                status_placeholder.success(
+                    "🎉 Triplette terminée ! Consultez l'onglet **Fiche Finale**."
+                )
+                with agents_placeholder.container():
+                    render_agent_progress(4)   # tous terminés
             except Exception as e:
                 st.session_state.generating = False
-                st.error(f"❌ Erreur : {e}")
+                st.error(f"❌ Erreur pipeline : {e}")
 
-# ── TAB 2 ─────────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════
+# TAB 2
+# ════════════════════════════════════════════════════════════════════════
 with tab2:
     if not st.session_state.results:
-        st.info("👆 Importez un document et cliquez sur **Générer la fiche médicale**.")
+        st.info("👆 Importez un document et lancez la **Triplette Médicale**.")
     else:
         res = st.session_state.results
-        col_t, col_tog, col_dl = st.columns([3, 2, 1])
-        with col_t:
-            st.markdown("## 📋 Fiche Médicale Finale")
-        with col_tog:
-            show_cmp = st.toggle("🔀 Brouillon / Final", value=False)
-        with col_dl:
+        ct, ctog, cdl = st.columns([3, 2, 1])
+        with ct:
+            st.markdown(f"## 📋 {res.get('title', 'Fiche Médicale')}")
+        with ctog:
+            show_cmp = st.toggle("🔀 Physiopath / Fiche Finale", value=False)
+        with cdl:
             st.download_button(
                 "⬇️ .md",
                 data=res["final_fiche"],
@@ -958,37 +925,42 @@ with tab2:
             )
         st.divider()
         if show_cmp:
-            render_comparison(res["draft_fiche"], res["final_fiche"])
+            render_comparison(res["physiopath"], res["final_fiche"])
         else:
             render_fiche(res["final_fiche"], badge=True)
 
-# ── TAB 3 ─────────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════
+# TAB 3
+# ════════════════════════════════════════════════════════════════════════
 with tab3:
     if not st.session_state.results:
-        st.info("Générez d'abord une fiche dans l'onglet 1.")
+        st.info("Lancez d'abord la Triplette dans l'onglet 1.")
     else:
         res = st.session_state.results
-        st.markdown("## 🔬 Détails du Processus de Consensus")
-        st.markdown("""
-        <div style="background:#E8EAF6;border-radius:10px;padding:14px 18px;
-                    margin-bottom:20px;font-size:13px;color:#1A237E;">
-            <b>Flux :</b> 📄 Document
-            → <b>🟢 Gemini (extraction JSON)</b>
-            → <b>🔵 Claude (rédaction fiche)</b>
-            → <b>🟢 Gemini (critique)</b>
-            → <b>🔵 Claude (corrections)</b>
-            → ✅ Fiche validée
-        </div>
-        """, unsafe_allow_html=True)
 
-        with st.expander("🟢 Tour 1 — Extraction Gemini", expanded=False):
+        st.markdown("## 🔬 Détails des 3 Agents")
+        st.markdown("""
+        <div style="background:#e8eaf6;border-radius:10px;padding:14px 18px;
+                    margin-bottom:20px;font-size:13px;color:#1a237e;">
+            <b>Pipeline :</b>
+            📄 Document
+            → <b>🔍 Gemini 1.5 Pro (extraction JSON)</b>
+            → <b>🧠 DeepSeek-R1 (physiopathologie CoT)</b>
+            → <b>✨ Grok-3 (synthèse 10 points)</b>
+            → ✅ Fiche finale
+        </div>""", unsafe_allow_html=True)
+
+        with st.expander("🔍 Agent 1 — Extraction Gemini 1.5 Pro", expanded=False):
+            st.caption("Données structurées extraites depuis le document source.")
             st.markdown(res["extracted_data"])
 
-        with st.expander("🔵 Tour 1 — Brouillon Claude", expanded=False):
-            render_fiche(res["draft_fiche"], badge=False)
+        with st.expander("🧠 Agent 2 — Physiopathologie DeepSeek-R1", expanded=False):
+            st.caption("Analyse physiopathologique avec Chain-of-Thought.")
+            if res.get("reasoning_trace"):
+                with st.expander("🔎 Trace de raisonnement interne (CoT)", expanded=False):
+                    st.markdown(f"```\n{res['reasoning_trace'][:5000]}\n```")
+            render_with_latex(res["physiopath"])
 
-        with st.expander("🟢 Tour 2 — Critique Gemini", expanded=False):
-            render_critique(res["critique"])
-
-        with st.expander("✅ Tour 2 — Fiche Finale Claude", expanded=True):
+        with st.expander("✨ Agent 3 — Fiche Finale Grok-3", expanded=True):
+            st.caption("Synthèse complète en 10 points avec LaTeX optimisé.")
             render_fiche(res["final_fiche"], badge=True)
