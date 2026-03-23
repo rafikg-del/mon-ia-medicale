@@ -3,7 +3,6 @@ import json
 import os
 import re
 import tempfile
-from typing import Optional
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -11,17 +10,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-GOOGLE_API_KEY   = os.getenv("GOOGLE_API_KEY")
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-XAI_API_KEY      = os.getenv("XAI_API_KEY")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+XAI_API_KEY    = os.getenv("XAI_API_KEY")
 
-GEMINI_MODEL   = "gemini-2.0-flash"   # fallback auto si indispo
-DEEPSEEK_MODEL = "deepseek-reasoner"
-GROK_MODEL     = "grok-3"
+GROK_MODEL = "grok-3"
 
 # Ordre de préférence Gemini — le premier disponible sera utilisé
 GEMINI_FALLBACK = [
-    "gemini-1.5-flash-8b",       # le plus petit, dispo partout
+    "gemini-1.5-flash-8b",
     "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
     "gemini-1.5-flash",
@@ -34,7 +30,7 @@ MAX_DOC_CHARS  = 150_000
 
 # ── PROMPTS ───────────────────────────────────────────────────────────────────
 EXTRACTION_PROMPT = """\
-Tu es un agent d'extraction médicale (Gemini 1.5 Pro).
+Tu es un agent d'extraction médicale.
 Analyse ce document de façon EXHAUSTIVE et retourne un JSON structuré avec :
 - "titre"             : thème principal du cours
 - "donnees_brutes"    : faits, chiffres, valeurs normales/pathologiques
@@ -51,47 +47,36 @@ DOCUMENT :
 Retourne UNIQUEMENT le JSON. Sois exhaustif.
 """
 
-PHYSIOPATH_PROMPT = """\
-Tu es DeepSeek-R1, modèle de raisonnement avec Chain-of-Thought profond.
-Mission EXCLUSIVE : produire la section Physiopathologie CAUSALE la plus rigoureuse possible.
-
-DONNÉES EXTRAITES PAR GEMINI :
-```json
-{extracted_data}
-```
-
-Raisonne étape par étape, puis génère :
-
-## ⚡ PHYSIOPATHOLOGIE CAUSALE
-
-### 1. Mécanisme déclencheur initial
-### 2. Cascade physiopathologique complète
-(flèches causales : Trigger → Mécanisme → Effet cellulaire → Manifestation clinique)
-### 3. Schéma logique (format ASCII)
-### 4. Bottlenecks mécanistiques clés (tableau)
-### 5. Corrélations anatomo-cliniques
-
-Utilise LaTeX pour les constantes ($K_a$, $Ca^{{2+}}$, $HCO_3^-$)
-et les équations : $$CO_2 + H_2O \\rightleftharpoons H^+ + HCO_3^-$$
-"""
-
 SYNTHESIS_PROMPT = """\
-Tu es Grok-3 (xAI). Synthétise les deux entrées en une fiche médicale parfaite.
+Tu es Grok-3 (xAI), expert en rédaction médicale structurée.
+À partir des données extraites ci-dessous, rédige une fiche médicale complète, rigoureuse et pédagogique.
 
-━━━ EXTRACTION GEMINI ━━━
+━━━ DONNÉES EXTRAITES PAR GEMINI ━━━
 {extracted_data}
 
-━━━ PHYSIOPATHOLOGIE DEEPSEEK-R1 ━━━
-{physiopath_analysis}
-
-LaTeX obligatoire : ions → $Ca^{{2+}}$, équations → $$CO_2 + H_2O \\rightleftharpoons H^+ + HCO_3^-$$
+LaTeX obligatoire : ions → $Ca^{{2+}}$, $Na^+$, $HCO_3^-$
+Équations chimiques → $$CO_2 + H_2O \\rightleftharpoons H^+ + HCO_3^-$$
 
 # {title}
 
 > Résumé en 2-3 phrases.
 
 ## 1. ⚡ PHYSIOPATHOLOGIE CAUSALE
-[Intègre le contenu DeepSeek-R1 intégralement]
+*(Section principale — développe TOUTE la cascade mécanistique avec flèches causales)*
+
+### Mécanisme déclencheur
+### Cascade physiopathologique
+- **Étape 1 :** [Trigger] → [Mécanisme] → [Effet cellulaire]
+- **Étape 2 :** ...
+
+### Schéma logique
+```
+[Cause primaire]
+      ↓
+[Mécanisme A] ──→ [Conséquence A1]
+      ↓
+[Manifestation clinique]
+```
 
 ## 2. 🔬 BOTTLENECKS MÉCANISTIQUES
 | Bottleneck | Mécanisme | Conséquence | Intervention |
@@ -107,7 +92,9 @@ LaTeX obligatoire : ions → $Ca^{{2+}}$, équations → $$CO_2 + H_2O \\rightle
 |---|---|---|---|
 
 ## 5. 🔍 EXAMENS COMPLÉMENTAIRES
-**Urgence :** ... **Confirmation :** ... **Suivi :** ...
+**Urgence :** ...
+**Confirmation :** ...
+**Suivi :** ...
 
 ## 6. 💊 TRAITEMENT ÉTIOLOGIQUE
 ## 7. 🩹 TRAITEMENT SYMPTOMATIQUE
@@ -116,6 +103,8 @@ LaTeX obligatoire : ions → $Ca^{{2+}}$, équations → $$CO_2 + H_2O \\rightle
 > 🚨 POINTS DE VIGILANCE
 | Complication | Facteurs de risque | Signes d'alarme | CAT |
 |---|---|---|---|
+
+**Contre-indications absolues :**
 
 ## 9. 📊 PRONOSTIC
 
@@ -130,7 +119,7 @@ PRÉSENTATION CLINIQUE
 
 ## 💡 POINTS CLÉS / MNÉMOTECHNIQUES
 
-Rédige la fiche COMPLÈTE. Remplace tous les "..." par du vrai contenu.
+Rédige la fiche COMPLÈTE. Remplace tous les "..." par du vrai contenu issu des données sources.
 """
 
 GROK_SYSTEM = """\
@@ -186,7 +175,7 @@ class GeminiAgent:
         import google.generativeai as genai
         genai.configure(api_key=GOOGLE_API_KEY)
 
-        # ── Diagnostic : liste tous les modèles disponibles ──────────────────
+        # Diagnostic : liste tous les modèles disponibles
         try:
             available = [m.name for m in genai.list_models()
                          if "generateContent" in m.supported_generation_methods]
@@ -209,11 +198,9 @@ class GeminiAgent:
             )
 
         print(f"=== GEMINI — tentative dans l'ordre : {GEMINI_FALLBACK} ===")
-
         self.model = None
         self.model_name = None
         for name in GEMINI_FALLBACK:
-            # Normalise : accepte "gemini-1.5-flash" et "models/gemini-1.5-flash"
             normalized = name if name.startswith("models/") else f"models/{name}"
             if normalized not in available:
                 print(f"  ✗ {name} — absent de la liste")
@@ -227,12 +214,10 @@ class GeminiAgent:
                 break
             except Exception as e:
                 print(f"  ✗ {name} — erreur : {e}")
-                continue
 
-        # Dernier recours : premier modèle disponible dans la liste
         if self.model is None and available:
             fallback_name = available[0].removeprefix("models/")
-            print(f"  ⚠ Aucun modèle GEMINI_FALLBACK dispo — utilisation de {fallback_name}")
+            print(f"  ⚠ Dernier recours : {fallback_name}")
             self.model = genai.GenerativeModel(fallback_name)
             self.model_name = fallback_name
 
@@ -246,21 +231,6 @@ class GeminiAgent:
         ).text
 
 
-class DeepSeekAgent:
-    def __init__(self):
-        from openai import OpenAI
-        self.client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
-
-    def reason(self, data: str) -> tuple[str, str]:
-        res = self.client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
-            max_tokens=8192,
-            messages=[{"role": "user", "content": PHYSIOPATH_PROMPT.format(extracted_data=data)}],
-        )
-        msg = res.choices[0].message
-        return getattr(msg, "reasoning_content", "") or "", msg.content or ""
-
-
 class GrokAgent:
     def __init__(self):
         from openai import OpenAI
@@ -268,12 +238,12 @@ class GrokAgent:
         self._messages: list[dict] = []
         self._system = ""
 
-    def synthesize(self, data: str, physio: str, title: str) -> str:
+    def synthesize(self, data: str, title: str) -> str:
         res = self.client.chat.completions.create(
             model=GROK_MODEL,
             max_tokens=8192,
             messages=[{"role": "user", "content": SYNTHESIS_PROMPT.format(
-                extracted_data=data, physiopath_analysis=physio, title=title,
+                extracted_data=data, title=title,
             )}],
         )
         return res.choices[0].message.content
@@ -383,7 +353,7 @@ def render_sidebar(doc_ctx: str = "", fiche: str = "") -> None:
                 st.rerun()
 
 # ── APP ───────────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="MedFiche AI — Triple Agent", page_icon="🏥", layout="wide")
+st.set_page_config(page_title="MedFiche AI", page_icon="🏥", layout="wide")
 
 st.markdown("""
 <style>
@@ -395,13 +365,11 @@ st.markdown("""
 .hdr .tags{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;}
 .tag{padding:4px 11px;border-radius:16px;font-size:11px;font-weight:600;color:#fff;}
 .t1{background:linear-gradient(90deg,#1a73e8,#0d47a1);}
-.t2{background:linear-gradient(90deg,#00bcd4,#006064);}
-.t3{background:linear-gradient(90deg,#7c4dff,#311b92);}
+.t2{background:linear-gradient(90deg,#7c4dff,#311b92);}
 .card{border-radius:10px;padding:13px 17px;margin:7px 0;
       display:flex;align-items:center;gap:11px;font-size:14px;}
 .c1{background:#e3f2fd;border-left:4px solid #1565c0;}
-.c2{background:#e0f7fa;border-left:4px solid #00838f;}
-.c3{background:#ede7f6;border-left:4px solid #6a1b9a;}
+.c2{background:#ede7f6;border-left:4px solid #6a1b9a;}
 .badge{display:inline-flex;align-items:center;gap:7px;
        background:linear-gradient(90deg,#1a73e8,#7c4dff);
        color:#fff;padding:5px 14px;border-radius:18px;
@@ -413,18 +381,16 @@ st.markdown("""
 st.markdown("""
 <div class="hdr">
   <h1>🏥 MedFiche AI</h1>
-  <p>Fiches médicales par consensus de trois intelligences artificielles</p>
+  <p>Fiches médicales générées par intelligence artificielle</p>
   <div class="tags">
-    <span class="tag t1">🔍 Gemini 1.5 Pro · Extraction</span>
-    <span class="tag t2">🧠 DeepSeek-R1 · Raisonnement</span>
-    <span class="tag t3">✨ Grok-3 · Synthèse & Chat</span>
+    <span class="tag t1">🔍 Gemini · Extraction</span>
+    <span class="tag t2">✨ Grok-3 · Synthèse & Chat</span>
   </div>
 </div>""", unsafe_allow_html=True)
 
 # API guard
-if not all([GOOGLE_API_KEY, DEEPSEEK_API_KEY, XAI_API_KEY]):
-    missing = [k for k, v in {"GOOGLE_API_KEY": GOOGLE_API_KEY,
-               "DEEPSEEK_API_KEY": DEEPSEEK_API_KEY, "XAI_API_KEY": XAI_API_KEY}.items() if not v]
+if not all([GOOGLE_API_KEY, XAI_API_KEY]):
+    missing = [k for k, v in {"GOOGLE_API_KEY": GOOGLE_API_KEY, "XAI_API_KEY": XAI_API_KEY}.items() if not v]
     st.error(f"Clés API manquantes : {', '.join(missing)}")
     st.stop()
 
@@ -446,20 +412,18 @@ with tab1:
 
     if uploaded:
         ftype = uploaded.name.split(".")[-1].lower()
-        # Cache par hash — évite la ré-extraction si même fichier, force si nouveau fichier
         fh = _file_hash(uploaded)
         cache_key = f"doc_{fh}"
         if cache_key not in st.session_state:
             with st.spinner("Lecture du fichier..."):
                 raw = extract_document(uploaded, ftype)
-            # Vider les anciens caches doc_ pour ne pas accumuler
             for k in list(st.session_state.keys()):
                 if k.startswith("doc_") and k != cache_key:
                     del st.session_state[k]
-            st.session_state[cache_key]  = raw[:MAX_DOC_CHARS]
-            st.session_state.doc_text    = st.session_state[cache_key]
-            st.session_state.file_name   = uploaded.name
-            st.session_state.results     = None  # reset fiche si nouveau fichier
+            st.session_state[cache_key] = raw[:MAX_DOC_CHARS]
+            st.session_state.doc_text   = st.session_state[cache_key]
+            st.session_state.file_name  = uploaded.name
+            st.session_state.results    = None
 
         text = st.session_state[cache_key]
         c1, c2, c3 = st.columns(3)
@@ -473,18 +437,17 @@ with tab1:
     if st.session_state.doc_text:
         col, _ = st.columns([2, 3])
         with col:
-            go = st.button("🚀 Lancer la Triplette Médicale", type="primary", use_container_width=True)
+            go = st.button("🚀 Générer la Fiche Médicale", type="primary", use_container_width=True)
 
         if go:
-            bar      = st.progress(0.0)
-            status   = st.empty()
-            cards    = st.empty()
+            bar    = st.progress(0.0)
+            status = st.empty()
+            cards  = st.empty()
 
             def _show_cards(active: int) -> None:
                 agents = [
-                    ("c1","🔍","Agent 1 — Gemini 1.5 Pro","Extraction OCR + schémas"),
-                    ("c2","🧠","Agent 2 — DeepSeek-R1","Physiopathologie (Chain-of-Thought)"),
-                    ("c3","✨","Agent 3 — Grok-3","Synthèse finale 10 points"),
+                    ("c1", "🔍", "Agent 1 — Gemini", "Extraction OCR + schémas"),
+                    ("c2", "✨", "Agent 2 — Grok-3", "Synthèse fiche complète 10 points"),
                 ]
                 html = ""
                 for i, (cls, ico, lbl, sub) in enumerate(agents, 1):
@@ -494,13 +457,13 @@ with tab1:
                 cards.markdown(html, unsafe_allow_html=True)
 
             try:
-                # Agent 1
+                # Agent 1 — Gemini extraction
                 bar.progress(0.05)
                 status.info("🔍 Agent 1 — Gemini extrait le corpus...")
                 _show_cards(1)
                 ext = GeminiAgent().extract(st.session_state.doc_text)
 
-                # Extraire le titre du JSON
+                # Titre depuis le JSON Gemini
                 title = st.session_state.file_name or "Cours médical"
                 try:
                     m = re.search(r'\{.*\}', ext, re.DOTALL)
@@ -509,24 +472,16 @@ with tab1:
                 except Exception:
                     pass
 
-                # Agent 2
-                bar.progress(0.35)
-                status.info("🧠 Agent 2 — DeepSeek-R1 raisonne sur la physiopathologie...")
+                # Agent 2 — Grok-3 synthèse
+                bar.progress(0.5)
+                status.info("✨ Agent 2 — Grok-3 rédige la fiche complète...")
                 _show_cards(2)
-                reasoning, physio = DeepSeekAgent().reason(ext)
-
-                # Agent 3
-                bar.progress(0.68)
-                status.info("✨ Agent 3 — Grok-3 synthétise la fiche finale...")
-                _show_cards(3)
-                final = GrokAgent().synthesize(ext, physio, title)
+                final = GrokAgent().synthesize(ext, title)
 
                 bar.progress(1.0)
-                _show_cards(4)
+                _show_cards(3)
                 st.session_state.results = {
                     "extracted_data": ext,
-                    "reasoning_trace": reasoning,
-                    "physiopath": physio,
                     "final_fiche": final,
                     "title": title,
                 }
@@ -538,7 +493,7 @@ with tab1:
 # ── TAB 2 ─────────────────────────────────────────────────────────────────────
 with tab2:
     if not st.session_state.results:
-        st.info("👆 Importez un document et lancez la Triplette.")
+        st.info("👆 Importez un document et lancez la génération.")
     else:
         res = st.session_state.results
         col_t, col_dl = st.columns([5, 1])
@@ -548,23 +503,17 @@ with tab2:
             st.download_button("⬇️ .md", data=res["final_fiche"],
                 file_name=f"fiche_{res['title']}.md", mime="text/markdown",
                 use_container_width=True)
-        st.markdown('<div class="badge">🤖 Gemini · DeepSeek-R1 · Grok-3</div>',
-                    unsafe_allow_html=True)
+        st.markdown('<div class="badge">🤖 Gemini · Grok-3</div>', unsafe_allow_html=True)
         st.divider()
         render_latex(res["final_fiche"])
 
 # ── TAB 3 ─────────────────────────────────────────────────────────────────────
 with tab3:
     if not st.session_state.results:
-        st.info("Lancez d'abord la Triplette.")
+        st.info("Lancez d'abord la génération.")
     else:
         res = st.session_state.results
-        with st.expander("🔍 Agent 1 — Extraction Gemini", expanded=False):
+        with st.expander("🔍 Agent 1 — Extraction Gemini (JSON brut)", expanded=False):
             st.markdown(res["extracted_data"])
-        with st.expander("🧠 Agent 2 — Physiopathologie DeepSeek-R1", expanded=False):
-            if res.get("reasoning_trace"):
-                with st.expander("🔎 Trace CoT interne", expanded=False):
-                    st.code(res["reasoning_trace"][:5000])
-            render_latex(res["physiopath"])
-        with st.expander("✨ Agent 3 — Fiche Finale Grok-3", expanded=True):
+        with st.expander("✨ Agent 2 — Fiche Finale Grok-3", expanded=True):
             render_latex(res["final_fiche"])
