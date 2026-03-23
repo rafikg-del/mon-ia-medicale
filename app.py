@@ -21,6 +21,7 @@ GROK_MODEL     = "grok-3"
 
 # Ordre de préférence Gemini — le premier disponible sera utilisé
 GEMINI_FALLBACK = [
+    "gemini-1.5-flash-8b",       # le plus petit, dispo partout
     "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
     "gemini-1.5-flash",
@@ -184,17 +185,57 @@ class GeminiAgent:
     def __init__(self):
         import google.generativeai as genai
         genai.configure(api_key=GOOGLE_API_KEY)
+
+        # ── Diagnostic : liste tous les modèles disponibles ──────────────────
+        try:
+            available = [m.name for m in genai.list_models()
+                         if "generateContent" in m.supported_generation_methods]
+            print("=== GEMINI — modèles disponibles sur cette clé API ===")
+            for name in available:
+                print(f"  • {name}")
+            if not available:
+                print("  (liste vide)")
+        except Exception as list_err:
+            available = []
+            print(f"=== GEMINI — impossible de lister les modèles : {list_err} ===")
+
+        if not available:
+            raise RuntimeError(
+                "Aucun modèle Gemini accessible avec cette clé API.\n\n"
+                "Solutions :\n"
+                "  1. Activez l'API Gemini sur https://aistudio.google.com → 'Get API key'\n"
+                "  2. Vérifiez que GOOGLE_API_KEY est bien définie dans .env / Streamlit Secrets\n"
+                "  3. Attendez quelques minutes si la clé vient d'être créée"
+            )
+
+        print(f"=== GEMINI — tentative dans l'ordre : {GEMINI_FALLBACK} ===")
+
         self.model = None
         self.model_name = None
         for name in GEMINI_FALLBACK:
+            # Normalise : accepte "gemini-1.5-flash" et "models/gemini-1.5-flash"
+            normalized = name if name.startswith("models/") else f"models/{name}"
+            if normalized not in available:
+                print(f"  ✗ {name} — absent de la liste")
+                continue
             try:
                 m = genai.GenerativeModel(name)
                 m.generate_content("test", generation_config={"max_output_tokens": 1, "temperature": 0})
                 self.model = m
                 self.model_name = name
+                print(f"  ✓ {name} — sélectionné")
                 break
-            except Exception:
+            except Exception as e:
+                print(f"  ✗ {name} — erreur : {e}")
                 continue
+
+        # Dernier recours : premier modèle disponible dans la liste
+        if self.model is None and available:
+            fallback_name = available[0].removeprefix("models/")
+            print(f"  ⚠ Aucun modèle GEMINI_FALLBACK dispo — utilisation de {fallback_name}")
+            self.model = genai.GenerativeModel(fallback_name)
+            self.model_name = fallback_name
+
         if self.model is None:
             raise RuntimeError(f"Aucun modèle Gemini disponible. Essayés : {GEMINI_FALLBACK}")
 
