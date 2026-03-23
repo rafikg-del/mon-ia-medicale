@@ -15,9 +15,18 @@ GOOGLE_API_KEY   = os.getenv("GOOGLE_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 XAI_API_KEY      = os.getenv("XAI_API_KEY")
 
-GEMINI_MODEL   = "gemini-1.5-pro"
+GEMINI_MODEL   = "gemini-2.0-flash"   # fallback auto si indispo
 DEEPSEEK_MODEL = "deepseek-reasoner"
 GROK_MODEL     = "grok-3"
+
+# Ordre de préférence Gemini — le premier disponible sera utilisé
+GEMINI_FALLBACK = [
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-pro",
+]
 
 CHAT_CTX_CHARS = 60_000
 MAX_DOC_CHARS  = 150_000
@@ -175,7 +184,19 @@ class GeminiAgent:
     def __init__(self):
         import google.generativeai as genai
         genai.configure(api_key=GOOGLE_API_KEY)
-        self.model = genai.GenerativeModel(GEMINI_MODEL)
+        self.model = None
+        self.model_name = None
+        for name in GEMINI_FALLBACK:
+            try:
+                m = genai.GenerativeModel(name)
+                m.generate_content("test", generation_config={"max_output_tokens": 1, "temperature": 0})
+                self.model = m
+                self.model_name = name
+                break
+            except Exception:
+                continue
+        if self.model is None:
+            raise RuntimeError(f"Aucun modèle Gemini disponible. Essayés : {GEMINI_FALLBACK}")
 
     def extract(self, text: str) -> str:
         return self.model.generate_content(
