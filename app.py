@@ -3,6 +3,7 @@ import json
 import os
 import re
 import tempfile
+import base64
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -15,25 +16,25 @@ XAI_API_KEY    = os.getenv("XAI_API_KEY")
 
 GROK_MODEL = "grok-3"
 
-# Ordre de préférence Gemini — le premier disponible sera utilisé
 GEMINI_FALLBACK = [
-    "gemini-1.5-flash-8b",
     "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
     "gemini-1.5-flash",
     "gemini-1.5-flash-latest",
     "gemini-1.5-pro",
+    "gemini-1.5-flash-8b",
+    "gemini-2.0-flash-lite",
 ]
 
 CHAT_CTX_CHARS = 60_000
 MAX_DOC_CHARS  = 150_000
+MAX_SLIDES_IMAGES = 70  # max slides à envoyer en images
 
 # ── PROMPTS ───────────────────────────────────────────────────────────────────
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# AGENT 1 — GEMINI : EXTRACTION EXHAUSTIVE
+# AGENT 1 — GEMINI : EXTRACTION EXHAUSTIVE (TEXTE)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-EXTRACTION_PROMPT = """\
+EXTRACTION_PROMPT_TEXT = """\
 Tu es un agent d'extraction médicale de niveau expert pour le DIUE MAPS \
 (Micronutrition, Alimentation, Prévention et Santé).
 
@@ -56,6 +57,8 @@ Retourne un JSON structuré avec :
   "titre": "thème principal du cours",
   "professeur": "nom du professeur si mentionné",
   "contexte": "module, date, formation (DIUE MAPS, etc.)",
+  "type_source": "transcript | diapo_texte | diapo_images | mixte",
+  "alerte_source_pauvre": false,
   "concepts_fondamentaux": [
     {{
       "concept": "nom du concept",
@@ -106,8 +109,72 @@ DOCUMENT :
 {document_text}
 ---
 
-Retourne UNIQUEMENT le JSON. Sois EXHAUSTIF. Ne résume JAMAIS. \
-Chaque phrase du document doit être traçable dans ton extraction.
+Retourne UNIQUEMENT le JSON. Sois EXHAUSTIF. Ne résume JAMAIS.
+"""
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# AGENT 1 — GEMINI : EXTRACTION MULTIMODALE (SLIDES = IMAGES)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EXTRACTION_PROMPT_VISUAL = """\
+Tu es un professeur expert en médecine fonctionnelle et biochimie, spécialisé DIUE MAPS \
+(Micronutrition, Alimentation, Prévention et Santé).
+
+MISSION : Tu reçois les IMAGES des slides d'un diaporama de cours. \
+Tu dois les analyser comme le ferait le professeur qui les commente à l'oral.
+
+RÈGLES ABSOLUES :
+1. DÉCRIS TOUT ce que tu vois sur chaque slide : texte, schémas, flèches, cascades, \
+   formules chimiques, structures moléculaires, tableaux, graphiques, légendes, couleurs \
+   significatives, hiérarchie visuelle.
+2. INTERPRÈTE chaque schéma : que montre-t-il ? quelle cascade mécanistique ? \
+   quel message implicite ? quelles flèches causales ?
+3. RESTE EXCLUSIVEMENT sur ce que montrent les images. N'invente RIEN qui ne soit pas \
+   visible sur les slides. Si un schéma est ambigu, signale l'ambiguïté.
+4. RECONSTRUIT la logique pédagogique : dans quel ordre les slides s'enchaînent, \
+   quelle progression conceptuelle, quel fil conducteur.
+5. Pour chaque slide, identifie :
+   - Le CONTENU FACTUEL (texte visible, données, formules)
+   - Le MESSAGE DU SCHÉMA (ce que le visuel communique au-delà du texte)
+   - Les CASCADES CAUSALES implicites (flèches, enchaînements)
+   - Les COFACTEURS / MÉTABOLITES visibles (vitamines, ions, molécules)
+   - Les LIENS MICRONUTRITION implicites ou explicites
+
+Retourne un JSON structuré avec :
+{{
+  "titre": "thème du diaporama",
+  "professeur": "nom si visible",
+  "contexte": "module, formation",
+  "type_source": "diapo_images",
+  "alerte_source_pauvre": false,
+  "nombre_slides": N,
+  "slides": [
+    {{
+      "numero": 1,
+      "titre_slide": "titre visible ou déduit",
+      "texte_visible": "tout le texte lisible sur la slide",
+      "description_schemas": "description détaillée de tout schéma/visuel",
+      "cascades_causales": "A → B → C identifiées dans les flèches/schémas",
+      "formules_chimiques": "toute formule ou structure visible",
+      "cofacteurs_visibles": ["métabolites, vitamines, ions visibles"],
+      "message_pedagogique": "ce que cette slide enseigne, quel concept elle illustre",
+      "liens_avec_slides_precedentes": "comment elle s'inscrit dans la progression"
+    }}
+  ],
+  "synthese_globale": {{
+    "concepts_fondamentaux": [
+      {{
+        "concept": "nom",
+        "contenu_complet": "explication reconstituée à partir des visuels",
+        "cascade_causale": "A → B → C",
+        "cofacteurs_impliques": ["liste"]
+      }}
+    ],
+    "cofacteurs_metabolites_identifies": ["liste globale"],
+    "liens_micronutrition": ["tous les liens identifiés"]
+  }}
+}}
+
+Analyse TOUTES les slides ci-dessous. Sois EXHAUSTIF sur les visuels.
 """
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -143,23 +210,28 @@ mécanistique (cause → mécanisme → conséquence → intervention possible).
    - **[Cours]** = enseigné comme fait établi
    - **(Digression Prof)** = opinion/hypothèse personnelle du professeur
    - **[Reconstruction]** = lien causal que TU reconstruis à partir du cours
+   - **[Visuel]** = information extraite d'un schéma/slide (pas du texte oral)
 
 6. ✅ ORIENTER vers l'action micronutritionnelle : chaque section doit mener vers \
 un bottleneck identifiable, un biomarqueur mesurable, ou une intervention possible \
 en médecine fonctionnelle / micronutrition.
 
+7. ✅ Si la source est un DIAPORAMA (slides), reconstruire le commentaire du professeur \
+tel qu'il l'aurait fait à l'oral : expliquer les schémas, interpréter les flèches, \
+expliciter les cascades causales implicites. Signaler avec **[Visuel]**.
+
 ━━━ FORMAT DE SORTIE OBLIGATOIRE ━━━
 
 # 🧠 {title}
 
-> **Résumé** : 2-3 phrases de cadrage (contexte DIUE MAPS, pas de résumé généraliste).
+> **Résumé** : 2-3 phrases de cadrage (contexte DIUE MAPS).
 
 ---
 
 ## F1 — [Premier grand thème du cours]
 
 ### Définitions & cadre
-• Définitions telles qu'enseignées par le professeur
+• Définitions telles qu'enseignées ou visibles sur les slides
 • Contexte clinique / enjeux en micronutrition
 
 ### Physiopathologie CAUSALE
@@ -168,21 +240,19 @@ en médecine fonctionnelle / micronutrition.
 • Interactions inter-systèmes
 *(Ne JAMAIS rester descriptif — toujours reconstruire la logique)*
 
+### Apports des slides/schémas
+• **[Visuel]** Description et interprétation de chaque schéma pertinent
+• Messages implicites des visuels (flèches, couleurs, hiérarchie)
+
 ### Exemples & expériences cités
-• [Reproduire INTÉGRALEMENT chaque exemple mentionné avec sa conclusion]
+• [Reproduire INTÉGRALEMENT chaque exemple visible ou mentionné]
 
 ### Digressions du professeur
-• *(Digression Prof)* [Contenu intégral, signalé comme tel]
+• *(Digression Prof)* [Contenu intégral si présent dans la source]
 
 ---
 
-## F2 — [Deuxième grand thème]
-*(Même structure)*
-
----
-
-## F[n] — [Dernier thème]
-*(Même structure)*
+*(Répéter pour F2, F3... autant de fiches que de grands thèmes)*
 
 ---
 
@@ -191,45 +261,31 @@ en médecine fonctionnelle / micronutrition.
 | Bottleneck | Mécanisme | Conséquence | Intervention micronutritionnelle |
 |---|---|---|---|
 
-*(Remplir UNIQUEMENT avec des éléments traçables au cours ou marqués [Reconstruction])*
-
 ## 🧠 ALGORITHMES DÉCISIONNELS
 
 ➤ **IF** [condition biologique mesurable] **THEN** [intervention adaptée]
-*(Orienté médecine fonctionnelle / micronutrition, PAS pharmacologie hospitalière sauf si enseignée)*
 
 ## 🗺️ MAPPING CORTEX
 
 **Biomarqueur** → **Voie métabolique** → **Mécanisme** → **Intervention**
-*(Chaîne complète : du mesurable à l'actionnable)*
 
 ## ⚠️ POINTS DE VIGILANCE
 
-• Pièges et confusions fréquentes
-• Avertissements explicites du professeur
-• Limites des connaissances mentionnées
-• Nuances importantes (ex: "ce n'est jamais du ON/OFF")
-
 ## 💡 POINTS CLÉS / MNÉMOTECHNIQUES
-*(Uniquement ceux mentionnés dans le cours ou légitimement reconstruits)*
 
 ---
 
 ━━━ VÉRIFICATION FINALE ━━━
-Avant de soumettre, vérifie :
 ☐ Chaque concept des données extraites apparaît dans la fiche
 ☐ Aucun traitement/posologie/pronostic n'a été inventé
 ☐ Chaque digression du prof est conservée et signalée
-☐ Chaque exemple/expérience est reproduit intégralement
+☐ Chaque schéma est décrit et interprété [Visuel]
 ☐ Les algorithmes IF/THEN sont orientés micronutrition
 ☐ Les bottlenecks identifient des cofacteurs/métabolites actionnables
 
 Rédige la fiche COMPLÈTE maintenant.
 """
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# CHAT SYSTEM PROMPT
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 GROK_SYSTEM = """\
 Tu es un assistant expert en médecine fonctionnelle et micronutrition pour le DIUE MAPS.
 
@@ -244,7 +300,7 @@ RÈGLES :
 avec tes connaissances (en le signalant).
 - Oriente tes réponses vers la pratique de micronutrition / médecine fonctionnelle.
 - Distingue toujours ce qui vient du cours [Cours] vs tes ajouts [Connaissance externe].
-- Réponds en français. Utilise LaTeX pour les équations si pertinent.
+- Réponds en français.
 """
 
 # ── DOCUMENT EXTRACTION ───────────────────────────────────────────────────────
@@ -252,7 +308,9 @@ def _file_hash(f) -> str:
     f.seek(0); h = hashlib.md5(f.read()).hexdigest(); f.seek(0)
     return h
 
-def extract_document(uploaded_file, file_type: str) -> str:
+
+def extract_document_text(uploaded_file, file_type: str) -> str:
+    """Extraction TEXTE classique (transcripts, docx, etc.)"""
     with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_type}") as tmp:
         tmp.write(uploaded_file.read())
         path = tmp.name
@@ -283,65 +341,175 @@ def extract_document(uploaded_file, file_type: str) -> str:
     finally:
         os.unlink(path)
 
+
+def extract_slides_as_images(uploaded_file, file_type: str) -> list[dict]:
+    """Convertit PDF/PPTX en images pour extraction visuelle multimodale.
+    Retourne une liste de {"page": int, "mime": str, "data_b64": str}."""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_type}") as tmp:
+        tmp.write(uploaded_file.read())
+        path = tmp.name
+
+    images = []
+    try:
+        if file_type == "pdf":
+            import fitz
+            doc = fitz.open(path)
+            for i, page in enumerate(doc):
+                if i >= MAX_SLIDES_IMAGES:
+                    break
+                pix = page.get_pixmap(dpi=150)
+                img_bytes = pix.tobytes("jpeg")
+                images.append({
+                    "page": i + 1,
+                    "mime": "image/jpeg",
+                    "data_b64": base64.b64encode(img_bytes).decode()
+                })
+            doc.close()
+
+        elif file_type == "pptx":
+            # Convertir PPTX → PDF via LibreOffice, puis PDF → images
+            import subprocess
+            out_dir = tempfile.mkdtemp()
+            try:
+                subprocess.run([
+                    "libreoffice", "--headless", "--convert-to", "pdf",
+                    "--outdir", out_dir, path
+                ], check=True, capture_output=True, timeout=120)
+                pdf_path = os.path.join(out_dir, os.path.splitext(os.path.basename(path))[0] + ".pdf")
+                if os.path.exists(pdf_path):
+                    import fitz
+                    doc = fitz.open(pdf_path)
+                    for i, page in enumerate(doc):
+                        if i >= MAX_SLIDES_IMAGES:
+                            break
+                        pix = page.get_pixmap(dpi=150)
+                        img_bytes = pix.tobytes("jpeg")
+                        images.append({
+                            "page": i + 1,
+                            "mime": "image/jpeg",
+                            "data_b64": base64.b64encode(img_bytes).decode()
+                        })
+                    doc.close()
+                    os.unlink(pdf_path)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                # LibreOffice non disponible — fallback texte seul
+                pass
+            finally:
+                try:
+                    os.rmdir(out_dir)
+                except OSError:
+                    pass
+    finally:
+        os.unlink(path)
+
+    return images
+
+
+def _is_slide_document(file_name: str, text: str) -> bool:
+    """Heuristique : détecte si c'est un diaporama (peu de texte, beaucoup de slides)."""
+    name_lower = file_name.lower()
+    if "diapo" in name_lower or "slide" in name_lower or "ppt" in name_lower:
+        return True
+    # PDF avec peu de texte par page = probablement des slides
+    pages = text.count("--- Page ")
+    if pages > 0:
+        chars_per_page = len(text) / pages
+        if chars_per_page < 500 and pages > 10:
+            return True
+    return False
+
+
 # ── AGENTS ────────────────────────────────────────────────────────────────────
 class GeminiAgent:
     def __init__(self):
         import google.generativeai as genai
+        self._genai = genai
         genai.configure(api_key=GOOGLE_API_KEY)
 
         try:
             available = [m.name for m in genai.list_models()
                          if "generateContent" in m.supported_generation_methods]
-            print("=== GEMINI — modèles disponibles sur cette clé API ===")
-            for name in available:
-                print(f"  • {name}")
-            if not available:
-                print("  (liste vide)")
-        except Exception as list_err:
+        except Exception:
             available = []
-            print(f"=== GEMINI — impossible de lister les modèles : {list_err} ===")
 
         if not available:
-            raise RuntimeError(
-                "Aucun modèle Gemini accessible avec cette clé API.\n\n"
-                "Solutions :\n"
-                "  1. Activez l'API Gemini sur https://aistudio.google.com → 'Get API key'\n"
-                "  2. Vérifiez que GOOGLE_API_KEY est bien définie dans .env / Streamlit Secrets\n"
-                "  3. Attendez quelques minutes si la clé vient d'être créée"
-            )
+            raise RuntimeError("Aucun modèle Gemini accessible avec cette clé API.")
 
-        print(f"=== GEMINI — tentative dans l'ordre : {GEMINI_FALLBACK} ===")
         self.model = None
         self.model_name = None
         for name in GEMINI_FALLBACK:
             normalized = name if name.startswith("models/") else f"models/{name}"
             if normalized not in available:
-                print(f"  ✗ {name} — absent de la liste")
                 continue
             try:
                 m = genai.GenerativeModel(name)
                 m.generate_content("test", generation_config={"max_output_tokens": 1, "temperature": 0})
                 self.model = m
                 self.model_name = name
-                print(f"  ✓ {name} — sélectionné")
                 break
-            except Exception as e:
-                print(f"  ✗ {name} — erreur : {e}")
+            except Exception:
+                continue
 
         if self.model is None and available:
             fallback_name = available[0].removeprefix("models/")
-            print(f"  ⚠ Dernier recours : {fallback_name}")
             self.model = genai.GenerativeModel(fallback_name)
             self.model_name = fallback_name
 
         if self.model is None:
-            raise RuntimeError(f"Aucun modèle Gemini disponible. Essayés : {GEMINI_FALLBACK}")
+            raise RuntimeError(f"Aucun modèle Gemini disponible.")
 
-    def extract(self, text: str) -> str:
+    def extract_text(self, text: str) -> str:
+        """Extraction depuis du texte pur (transcripts, docx)."""
         return self.model.generate_content(
-            EXTRACTION_PROMPT.format(document_text=text),
+            EXTRACTION_PROMPT_TEXT.format(document_text=text),
             generation_config={"max_output_tokens": 8192, "temperature": 0.1},
         ).text
+
+    def extract_visual(self, slide_images: list[dict]) -> str:
+        """Extraction multimodale : envoie les images des slides à Gemini."""
+        parts = [EXTRACTION_PROMPT_VISUAL]
+        for img in slide_images:
+            parts.append({
+                "mime_type": img["mime"],
+                "data": base64.b64decode(img["data_b64"])
+            })
+            parts.append(f"\n[Slide {img['page']}]\n")
+
+        return self.model.generate_content(
+            parts,
+            generation_config={"max_output_tokens": 8192, "temperature": 0.1},
+        ).text
+
+    def extract_combined(self, text: str, slide_images: list[dict]) -> str:
+        """Extraction combinée : texte + images des slides."""
+        # D'abord extraction visuelle des slides
+        visual_data = self.extract_visual(slide_images) if slide_images else ""
+        # Puis extraction texte
+        text_data = self.extract_text(text) if text.strip() else ""
+
+        if visual_data and text_data:
+            # Fusionner les deux extractions
+            merge_prompt = f"""\
+Tu reçois deux extractions du MÊME cours :
+1) Extraction VISUELLE (depuis les images des slides) :
+{visual_data}
+
+2) Extraction TEXTUELLE (depuis le texte/transcript) :
+{text_data}
+
+MISSION : Fusionne ces deux extractions en un SEUL JSON unifié.
+- Conserve TOUTE l'information des deux sources sans perte.
+- L'extraction visuelle apporte les schémas, flèches, structures moléculaires.
+- L'extraction textuelle apporte les explications détaillées, digressions, exemples.
+- En cas de redondance, garde la version la plus complète.
+- En cas d'information complémentaire, fusionne.
+Retourne le JSON fusionné.
+"""
+            return self.model.generate_content(
+                merge_prompt,
+                generation_config={"max_output_tokens": 8192, "temperature": 0.1},
+            ).text
+        return visual_data or text_data
 
 
 class GrokAgent:
@@ -430,7 +598,7 @@ def render_sidebar(doc_ctx: str = "", fiche: str = "") -> None:
         elif not fiche:
             st.info("💡 Générez une fiche pour des réponses précises.")
         else:
-            st.success("🎯 Grok-3 a accès à votre fiche (orientée micronutrition).")
+            st.success("🎯 Grok-3 a accès à votre fiche.")
 
         st.divider()
 
@@ -482,6 +650,7 @@ st.markdown("""
       display:flex;align-items:center;gap:11px;font-size:14px;}
 .c1{background:#e3f2fd;border-left:4px solid #1565c0;}
 .c2{background:#ede7f6;border-left:4px solid #6a1b9a;}
+.c3{background:#e8f5e9;border-left:4px solid #2e7d32;}
 .badge{display:inline-flex;align-items:center;gap:7px;
        background:linear-gradient(90deg,#1a73e8,#7c4dff);
        color:#fff;padding:5px 14px;border-radius:18px;
@@ -493,30 +662,26 @@ st.markdown("""
 st.markdown("""
 <div class="hdr">
   <h1>🏥 MedFiche AI — DIUE MAPS</h1>
-  <p>Fiches de cours reconstruites · Micronutrition · Médecine fonctionnelle</p>
+  <p>Fiches de cours reconstruites · Extraction visuelle multimodale · Micronutrition</p>
   <div class="tags">
-    <span class="tag t1">🔍 Gemini · Extraction exhaustive</span>
+    <span class="tag t1">🔍 Gemini · Extraction texte + images</span>
     <span class="tag t2">✨ Grok-3 · Reconstruction causale</span>
   </div>
 </div>""", unsafe_allow_html=True)
 
-# API guard
 if not all([GOOGLE_API_KEY, XAI_API_KEY]):
     missing = [k for k, v in {"GOOGLE_API_KEY": GOOGLE_API_KEY, "XAI_API_KEY": XAI_API_KEY}.items() if not v]
     st.error(f"Clés API manquantes : {', '.join(missing)}")
     st.stop()
 
-# Session state
-for k, v in [("doc_text", None), ("file_name", None), ("results", None)]:
+for k, v in [("doc_text", None), ("file_name", None), ("results", None), ("slide_images", None)]:
     if k not in st.session_state:
         st.session_state[k] = v
 
-# Sidebar
 fiche_ctx = (st.session_state.results or {}).get("final_fiche", "") or ""
 render_sidebar(st.session_state.doc_text or "", fiche_ctx)
 
-# Tabs
-tab1, tab2, tab3 = st.tabs(["📁 Import & Génération", "📋 Fiche Reconstruite", "🔬 Détails extraction"])
+tab1, tab2, tab3 = st.tabs(["📁 Import & Génération", "📋 Fiche Reconstruite", "🔬 Détails"])
 
 # ── TAB 1 ─────────────────────────────────────────────────────────────────────
 with tab1:
@@ -528,23 +693,54 @@ with tab1:
         cache_key = f"doc_{fh}"
         if cache_key not in st.session_state:
             with st.spinner("Lecture du fichier..."):
-                raw = extract_document(uploaded, ftype)
+                uploaded.seek(0)
+                raw = extract_document_text(uploaded, ftype)
+
+                # Extraire aussi les images si c'est un PDF ou PPTX
+                slide_imgs = []
+                if ftype in ("pdf", "pptx"):
+                    uploaded.seek(0)
+                    with st.spinner("Conversion slides → images..."):
+                        slide_imgs = extract_slides_as_images(uploaded, ftype)
+
             for k in list(st.session_state.keys()):
                 if k.startswith("doc_") and k != cache_key:
                     del st.session_state[k]
-            st.session_state[cache_key] = raw[:MAX_DOC_CHARS]
-            st.session_state.doc_text   = st.session_state[cache_key]
-            st.session_state.file_name  = uploaded.name
-            st.session_state.results    = None
+            st.session_state[cache_key]     = raw[:MAX_DOC_CHARS]
+            st.session_state.doc_text       = st.session_state[cache_key]
+            st.session_state.file_name      = uploaded.name
+            st.session_state.slide_images   = slide_imgs
+            st.session_state.results        = None
 
         text = st.session_state[cache_key]
-        c1, c2, c3 = st.columns(3)
+        imgs = st.session_state.slide_images or []
+
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("Caractères", f"{len(text):,}")
         c2.metric("Mots",       f"{len(text.split()):,}")
         c3.metric("Tokens (~)", f"{len(text)//4:,}")
+        c4.metric("Slides (img)", f"{len(imgs)}")
 
-        with st.expander("👁️ Aperçu", expanded=False):
+        is_slides = _is_slide_document(st.session_state.file_name, text)
+        if is_slides and imgs:
+            st.info(f"📊 Document détecté comme **diaporama** ({len(imgs)} slides). "
+                    f"Extraction visuelle multimodale activée.")
+        elif is_slides and not imgs:
+            st.warning("📊 Document détecté comme diaporama mais conversion images échouée. "
+                       "Extraction texte seul (qualité réduite).")
+
+        with st.expander("👁️ Aperçu texte", expanded=False):
             st.text(text[:2000] + ("..." if len(text) > 2000 else ""))
+
+        if imgs:
+            with st.expander(f"🖼️ Aperçu slides ({len(imgs)} images)", expanded=False):
+                cols = st.columns(min(4, len(imgs)))
+                for i, img in enumerate(imgs[:8]):
+                    with cols[i % 4]:
+                        st.image(base64.b64decode(img["data_b64"]),
+                                 caption=f"Slide {img['page']}", use_container_width=True)
+                if len(imgs) > 8:
+                    st.caption(f"... et {len(imgs) - 8} slides supplémentaires")
 
     if st.session_state.doc_text:
         col, _ = st.columns([2, 3])
@@ -556,11 +752,22 @@ with tab1:
             status = st.empty()
             cards  = st.empty()
 
-            def _show_cards(active: int) -> None:
-                agents = [
-                    ("c1", "🔍", "Agent 1 — Gemini", "Extraction exhaustive (zéro perte)"),
-                    ("c2", "✨", "Agent 2 — Grok-3", "Reconstruction causale + micronutrition"),
-                ]
+            text = st.session_state.doc_text
+            imgs = st.session_state.slide_images or []
+            is_slides = _is_slide_document(st.session_state.file_name, text)
+
+            def _show_cards(active: int, use_visual: bool) -> None:
+                if use_visual:
+                    agents = [
+                        ("c1", "🖼️", "Agent 1a — Gemini Vision", f"Analyse visuelle {len(imgs)} slides"),
+                        ("c3", "🔍", "Agent 1b — Gemini Texte", "Extraction texte + fusion"),
+                        ("c2", "✨", "Agent 2 — Grok-3", "Reconstruction causale + micronutrition"),
+                    ]
+                else:
+                    agents = [
+                        ("c1", "🔍", "Agent 1 — Gemini", "Extraction exhaustive"),
+                        ("c2", "✨", "Agent 2 — Grok-3", "Reconstruction causale + micronutrition"),
+                    ]
                 html = ""
                 for i, (cls, ico, lbl, sub) in enumerate(agents, 1):
                     s = "⏳ En cours..." if i == active else ("✅ Terminé" if i < active else "⌛ En attente")
@@ -569,13 +776,27 @@ with tab1:
                 cards.markdown(html, unsafe_allow_html=True)
 
             try:
-                # Agent 1 — Gemini extraction
-                bar.progress(0.05)
-                status.info("🔍 Agent 1 — Gemini extrait le corpus (exhaustif, zéro perte)...")
-                _show_cards(1)
-                ext = GeminiAgent().extract(st.session_state.doc_text)
+                use_visual = is_slides and len(imgs) > 0
+                gemini = GeminiAgent()
 
-                # Titre depuis le JSON Gemini
+                if use_visual:
+                    # Étape 1a : extraction visuelle
+                    bar.progress(0.05)
+                    status.info(f"🖼️ Agent 1a — Gemini analyse {len(imgs)} slides visuellement...")
+                    _show_cards(1, True)
+                    ext = gemini.extract_combined(text, imgs)
+                    bar.progress(0.5)
+                    _show_cards(3, True)
+                else:
+                    # Extraction texte classique
+                    bar.progress(0.05)
+                    status.info("🔍 Agent 1 — Gemini extrait le corpus...")
+                    _show_cards(1, False)
+                    ext = gemini.extract_text(text)
+                    bar.progress(0.5)
+                    _show_cards(2, False)
+
+                # Titre
                 title = st.session_state.file_name or "Cours médical"
                 try:
                     m = re.search(r'\{.*\}', ext, re.DOTALL)
@@ -585,19 +806,20 @@ with tab1:
                     pass
 
                 # Agent 2 — Grok-3 synthèse
-                bar.progress(0.5)
-                status.info("✨ Agent 2 — Grok-3 reconstruit la fiche (causale + micronutrition)...")
-                _show_cards(2)
+                status.info("✨ Agent 2 — Grok-3 reconstruit la fiche causale...")
+                _show_cards(3 if use_visual else 2, use_visual)
                 final = GrokAgent().synthesize(ext, title)
 
                 bar.progress(1.0)
-                _show_cards(3)
+                _show_cards(4 if use_visual else 3, use_visual)
                 st.session_state.results = {
                     "extracted_data": ext,
                     "final_fiche": final,
                     "title": title,
+                    "extraction_mode": "visuelle+texte" if use_visual else "texte",
                 }
-                status.success("🎉 Terminé ! Consultez l'onglet **Fiche Reconstruite**.")
+                status.success(f"🎉 Terminé ! Mode : **{'Visuel + Texte' if use_visual else 'Texte'}**. "
+                               f"Consultez l'onglet **Fiche Reconstruite**.")
 
             except Exception as e:
                 status.error(f"❌ Erreur : {e}")
@@ -610,12 +832,14 @@ with tab2:
         res = st.session_state.results
         col_t, col_dl = st.columns([5, 1])
         with col_t:
+            mode = res.get("extraction_mode", "texte")
             st.markdown(f"## 📋 {res['title']}")
         with col_dl:
             st.download_button("⬇️ .md", data=res["final_fiche"],
                 file_name=f"fiche_{res['title']}.md", mime="text/markdown",
                 use_container_width=True)
-        st.markdown('<div class="badge">🔍 Gemini (extraction) · ✨ Grok-3 (reconstruction causale)</div>', unsafe_allow_html=True)
+        mode_label = "🖼️ Visuel+Texte" if mode == "visuelle+texte" else "📄 Texte"
+        st.markdown(f'<div class="badge">{mode_label} · Gemini → Grok-3</div>', unsafe_allow_html=True)
         st.divider()
         render_latex(res["final_fiche"])
 
@@ -625,7 +849,7 @@ with tab3:
         st.info("Lancez d'abord la génération.")
     else:
         res = st.session_state.results
-        with st.expander("🔍 Agent 1 — Extraction Gemini (JSON brut)", expanded=False):
+        with st.expander("🔍 Extraction Gemini (JSON brut)", expanded=False):
             st.markdown(res["extracted_data"])
-        with st.expander("✨ Agent 2 — Fiche Reconstruite Grok-3", expanded=True):
+        with st.expander("✨ Fiche Reconstruite Grok-3", expanded=True):
             render_latex(res["final_fiche"])
