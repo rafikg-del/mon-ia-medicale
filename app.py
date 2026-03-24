@@ -29,108 +29,222 @@ CHAT_CTX_CHARS = 60_000
 MAX_DOC_CHARS  = 150_000
 
 # ── PROMPTS ───────────────────────────────────────────────────────────────────
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# AGENT 1 — GEMINI : EXTRACTION EXHAUSTIVE
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EXTRACTION_PROMPT = """\
-Tu es un agent d'extraction médicale.
-Analyse ce document de façon EXHAUSTIVE et retourne un JSON structuré avec :
-- "titre"             : thème principal du cours
-- "donnees_brutes"    : faits, chiffres, valeurs normales/pathologiques
-- "schemas_causaux"   : cascades mécanistiques (A → B → conséquence)
-- "entites_medicales" : pathologies, médicaments (DCI + posologie), examens
-- "points_critiques"  : complications, urgences, contre-indications
-- "mnémotechniques"   : acronymes, règles mémo
-- "algorithmes"       : arbres décisionnels
+Tu es un agent d'extraction médicale de niveau expert pour le DIUE MAPS \
+(Micronutrition, Alimentation, Prévention et Santé).
+
+MISSION : Extraire la TOTALITÉ du contenu de ce document de cours sans aucune perte d'information.
+
+RÈGLES ABSOLUES :
+1. EXHAUSTIVITÉ TOTALE : chaque fait, chiffre, mécanisme, exemple, digression du professeur, \
+question/réponse d'étudiant, référence à un schéma ou slide doit être extrait.
+2. ZÉRO INVENTION : n'ajoute RIEN qui ne soit pas dans le document.
+3. PRÉSERVER LES NUANCES : si le professeur dit "on n'a pas prouvé" ou "c'est discuté", \
+retranscris cette nuance exactement.
+4. DISTINGUER les types de contenu :
+   - [COURS] = contenu enseigné comme fait établi
+   - [DIGRESSION_PROF] = opinion personnelle, hypothèse, anecdote du professeur
+   - [QUESTION_ETUDIANT] = question posée par un étudiant et réponse du prof
+   - [SCHEMA] = description d'un schéma, slide, ou visuel commenté
+
+Retourne un JSON structuré avec :
+{{
+  "titre": "thème principal du cours",
+  "professeur": "nom du professeur si mentionné",
+  "contexte": "module, date, formation (DIUE MAPS, etc.)",
+  "concepts_fondamentaux": [
+    {{
+      "concept": "nom du concept",
+      "type": "COURS | DIGRESSION_PROF",
+      "contenu_complet": "explication INTÉGRALE sans résumé",
+      "cascade_causale": "A → B → C si applicable",
+      "exemples_cites": ["tous les exemples mentionnés par le prof"],
+      "nuances_prof": "avertissements, limites, doutes exprimés"
+    }}
+  ],
+  "schemas_et_slides": [
+    {{
+      "reference": "slide X ou description du schéma",
+      "contenu": "ce que le schéma montre",
+      "message_implicite": "interprétation du visuel"
+    }}
+  ],
+  "experiences_citees": [
+    {{
+      "nom": "nom de l'expérience ou étude",
+      "protocole": "description",
+      "resultat": "résultat",
+      "conclusion_prof": "ce qu'en dit le professeur"
+    }}
+  ],
+  "digressions_professeur": [
+    {{
+      "sujet": "thème de la digression",
+      "contenu_integral": "TOUT ce que le prof a dit, sans couper"
+    }}
+  ],
+  "questions_etudiants": [
+    {{
+      "question": "question posée",
+      "reponse": "réponse du professeur"
+    }}
+  ],
+  "cofacteurs_metabolites_cites": ["liste de tous les cofacteurs, vitamines, minéraux, \
+métabolites mentionnés dans le cours"],
+  "liens_micronutrition": ["tout ce que le cours dit sur le lien avec la micronutrition, \
+l'alimentation, la supplémentation"],
+  "points_critiques": ["complications, urgences, contre-indications MENTIONNÉES dans le cours"],
+  "avertissements_prof": ["mises en garde explicites du professeur"]
+}}
 
 DOCUMENT :
 ---
 {document_text}
 ---
-Retourne UNIQUEMENT le JSON. Sois exhaustif.
+
+Retourne UNIQUEMENT le JSON. Sois EXHAUSTIF. Ne résume JAMAIS. \
+Chaque phrase du document doit être traçable dans ton extraction.
 """
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# AGENT 2 — GROK : SYNTHÈSE FICHE RECONSTRUITE
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SYNTHESIS_PROMPT = """\
-Tu es Grok-3 (xAI), expert en rédaction médicale structurée.
-À partir des données extraites ci-dessous, rédige une fiche médicale complète, rigoureuse et pédagogique.
+Tu es un expert en médecine fonctionnelle, biochimie et pédagogie avancée \
+(niveau médecin senior / chercheur), spécialisé dans le DIUE MAPS \
+(Micronutrition, Alimentation, Prévention et Santé).
 
-━━━ DONNÉES EXTRAITES PAR GEMINI ━━━
+Ta mission : transformer les données extraites ci-dessous en une FICHE DE COURS RECONSTRUITE, \
+exhaustive et directement actionnable en pratique de micronutrition.
+
+━━━ DONNÉES EXTRAITES ━━━
 {extracted_data}
 
-LaTeX obligatoire : ions → $Ca^{{2+}}$, $Na^+$, $HCO_3^-$
-Équations chimiques → $$CO_2 + H_2O \\rightleftharpoons H^+ + HCO_3^-$$
+━━━ RÈGLES ABSOLUES ━━━
 
-# {title}
+1. ❌ ZÉRO CONTENU INVENTÉ : n'ajoute AUCUN traitement, posologie, examen complémentaire, \
+pronostic ou espérance de vie qui ne figure pas dans les données extraites. \
+Si tu reconstruis un lien causal implicite, signale-le avec [Reconstruction].
 
-> Résumé en 2-3 phrases.
+2. ❌ ZÉRO PERTE D'INFORMATION : chaque concept, exemple, digression, expérience, \
+nuance et avertissement des données extraites DOIT apparaître dans ta fiche.
 
-## 1. ⚡ PHYSIOPATHOLOGIE CAUSALE
-*(Section principale — développe TOUTE la cascade mécanistique avec flèches causales)*
+3. ❌ NE PAS utiliser un template de pathologie clinique (pas de "diagnostic différentiel", \
+"traitement symptomatique", "pronostic" SAUF si le professeur en parle explicitement).
 
-### Mécanisme déclencheur
-### Cascade physiopathologique
-- **Étape 1 :** [Trigger] → [Mécanisme] → [Effet cellulaire]
-- **Étape 2 :** ...
+4. ✅ RECONSTRUIRE la logique causale : pour chaque concept, expliciter la cascade \
+mécanistique (cause → mécanisme → conséquence → intervention possible).
 
-### Schéma logique
-```
-[Cause primaire]
-      ↓
-[Mécanisme A] ──→ [Conséquence A1]
-      ↓
-[Manifestation clinique]
-```
+5. ✅ DISTINGUER les niveaux de preuve :
+   - **[Cours]** = enseigné comme fait établi
+   - **(Digression Prof)** = opinion/hypothèse personnelle du professeur
+   - **[Reconstruction]** = lien causal que TU reconstruis à partir du cours
 
-## 2. 🔬 BOTTLENECKS MÉCANISTIQUES
-| Bottleneck | Mécanisme | Conséquence | Intervention |
+6. ✅ ORIENTER vers l'action micronutritionnelle : chaque section doit mener vers \
+un bottleneck identifiable, un biomarqueur mesurable, ou une intervention possible \
+en médecine fonctionnelle / micronutrition.
+
+━━━ FORMAT DE SORTIE OBLIGATOIRE ━━━
+
+# 🧠 {title}
+
+> **Résumé** : 2-3 phrases de cadrage (contexte DIUE MAPS, pas de résumé généraliste).
+
+---
+
+## F1 — [Premier grand thème du cours]
+
+### Définitions & cadre
+• Définitions telles qu'enseignées par le professeur
+• Contexte clinique / enjeux en micronutrition
+
+### Physiopathologie CAUSALE
+• Cascade mécanistique complète : A → B → C → D
+• Boucles de régulation
+• Interactions inter-systèmes
+*(Ne JAMAIS rester descriptif — toujours reconstruire la logique)*
+
+### Exemples & expériences cités
+• [Reproduire INTÉGRALEMENT chaque exemple mentionné avec sa conclusion]
+
+### Digressions du professeur
+• *(Digression Prof)* [Contenu intégral, signalé comme tel]
+
+---
+
+## F2 — [Deuxième grand thème]
+*(Même structure)*
+
+---
+
+## F[n] — [Dernier thème]
+*(Même structure)*
+
+---
+
+## 🔬 BOTTLENECKS BIOLOGIQUES
+
+| Bottleneck | Mécanisme | Conséquence | Intervention micronutritionnelle |
 |---|---|---|---|
 
-## 3. 🩺 MANIFESTATIONS CLINIQUES
-**Très fréquents (>50%) :** ...
-**Fréquents (10-50%) :** ...
-**Rares mais critiques :** ...
+*(Remplir UNIQUEMENT avec des éléments traçables au cours ou marqués [Reconstruction])*
 
-## 4. ⚖️ DIAGNOSTIC DIFFÉRENTIEL
-| Pathologie | Arguments POUR | Arguments CONTRE | Examen discriminant |
-|---|---|---|---|
+## 🧠 ALGORITHMES DÉCISIONNELS
 
-## 5. 🔍 EXAMENS COMPLÉMENTAIRES
-**Urgence :** ...
-**Confirmation :** ...
-**Suivi :** ...
+➤ **IF** [condition biologique mesurable] **THEN** [intervention adaptée]
+*(Orienté médecine fonctionnelle / micronutrition, PAS pharmacologie hospitalière sauf si enseignée)*
 
-## 6. 💊 TRAITEMENT ÉTIOLOGIQUE
-## 7. 🩹 TRAITEMENT SYMPTOMATIQUE
+## 🗺️ MAPPING CORTEX
 
-## 8. ⚠️ COMPLICATIONS
-> 🚨 POINTS DE VIGILANCE
-| Complication | Facteurs de risque | Signes d'alarme | CAT |
-|---|---|---|---|
+**Biomarqueur** → **Voie métabolique** → **Mécanisme** → **Intervention**
+*(Chaîne complète : du mesurable à l'actionnable)*
 
-**Contre-indications absolues :**
+## ⚠️ POINTS DE VIGILANCE
 
-## 9. 📊 PRONOSTIC
-
-## 10. 🧠 ALGORITHME DÉCISIONNEL
-```
-PRÉSENTATION CLINIQUE
-        ↓
-[Critère A ?]
-├── OUI → [Examen B] → Positif → Traitement X
-└── NON → [Critère C ?] → OUI → Traitement Z
-```
+• Pièges et confusions fréquentes
+• Avertissements explicites du professeur
+• Limites des connaissances mentionnées
+• Nuances importantes (ex: "ce n'est jamais du ON/OFF")
 
 ## 💡 POINTS CLÉS / MNÉMOTECHNIQUES
+*(Uniquement ceux mentionnés dans le cours ou légitimement reconstruits)*
 
-Rédige la fiche COMPLÈTE. Remplace tous les "..." par du vrai contenu issu des données sources.
+---
+
+━━━ VÉRIFICATION FINALE ━━━
+Avant de soumettre, vérifie :
+☐ Chaque concept des données extraites apparaît dans la fiche
+☐ Aucun traitement/posologie/pronostic n'a été inventé
+☐ Chaque digression du prof est conservée et signalée
+☐ Chaque exemple/expérience est reproduit intégralement
+☐ Les algorithmes IF/THEN sont orientés micronutrition
+☐ Les bottlenecks identifient des cofacteurs/métabolites actionnables
+
+Rédige la fiche COMPLÈTE maintenant.
 """
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# CHAT SYSTEM PROMPT
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 GROK_SYSTEM = """\
-Tu es Grok-3 (xAI), assistant médical de MedFiche AI.
+Tu es un assistant expert en médecine fonctionnelle et micronutrition pour le DIUE MAPS.
 
 {fiche_block}
 
 {context_block}
 
-Règles : appuie-toi sur la fiche pour répondre aux questions précises.
-Complète avec le cours si besoin. Réponds en français avec LaTeX pour les équations.
+RÈGLES :
+- Appuie-toi PRIORITAIREMENT sur la fiche et le cours source pour répondre.
+- Ne JAMAIS inventer de contenu non présent dans les sources.
+- Si une question dépasse le contenu du cours, dis-le clairement avant de compléter \
+avec tes connaissances (en le signalant).
+- Oriente tes réponses vers la pratique de micronutrition / médecine fonctionnelle.
+- Distingue toujours ce qui vient du cours [Cours] vs tes ajouts [Connaissance externe].
+- Réponds en français. Utilise LaTeX pour les équations si pertinent.
 """
 
 # ── DOCUMENT EXTRACTION ───────────────────────────────────────────────────────
@@ -175,7 +289,6 @@ class GeminiAgent:
         import google.generativeai as genai
         genai.configure(api_key=GOOGLE_API_KEY)
 
-        # Diagnostic : liste tous les modèles disponibles
         try:
             available = [m.name for m in genai.list_models()
                          if "generateContent" in m.supported_generation_methods]
@@ -227,7 +340,7 @@ class GeminiAgent:
     def extract(self, text: str) -> str:
         return self.model.generate_content(
             EXTRACTION_PROMPT.format(document_text=text),
-            generation_config={"max_output_tokens": 8192, "temperature": 0.2},
+            generation_config={"max_output_tokens": 8192, "temperature": 0.1},
         ).text
 
 
@@ -278,7 +391,6 @@ class GrokAgent:
 _DISPLAY_MATH = re.compile(r'\$\$(.+?)\$\$', re.DOTALL)
 
 def render_latex(content: str) -> None:
-    """$$...$$ → st.latex() | reste → st.markdown() (gère $...$ inline)."""
     for i, part in enumerate(_DISPLAY_MATH.split(content)):
         if i % 2 == 0:
             if part.strip():
@@ -309,7 +421,7 @@ def render_sidebar(doc_ctx: str = "", fiche: str = "") -> None:
         st.markdown(f"""
         <div style="background:linear-gradient(135deg,#0a0a23,#1a0533);
                     padding:16px;border-radius:12px;margin-bottom:12px;">
-            <div style="color:#fff;font-size:17px;font-weight:700;">✨ Grok-3 — Chat</div>
+            <div style="color:#fff;font-size:17px;font-weight:700;">✨ Grok-3 — Chat DIUE MAPS</div>
             <div style="color:rgba(255,255,255,0.5);font-size:11px;margin-top:4px;">{status}</div>
         </div>""", unsafe_allow_html=True)
 
@@ -318,7 +430,7 @@ def render_sidebar(doc_ctx: str = "", fiche: str = "") -> None:
         elif not fiche:
             st.info("💡 Générez une fiche pour des réponses précises.")
         else:
-            st.success("🎯 Grok-3 a accès à votre fiche.")
+            st.success("🎯 Grok-3 a accès à votre fiche (orientée micronutrition).")
 
         st.divider()
 
@@ -353,7 +465,7 @@ def render_sidebar(doc_ctx: str = "", fiche: str = "") -> None:
                 st.rerun()
 
 # ── APP ───────────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="MedFiche AI", page_icon="🏥", layout="wide")
+st.set_page_config(page_title="MedFiche AI — DIUE MAPS", page_icon="🏥", layout="wide")
 
 st.markdown("""
 <style>
@@ -380,11 +492,11 @@ st.markdown("""
 
 st.markdown("""
 <div class="hdr">
-  <h1>🏥 MedFiche AI</h1>
-  <p>Fiches médicales générées par intelligence artificielle</p>
+  <h1>🏥 MedFiche AI — DIUE MAPS</h1>
+  <p>Fiches de cours reconstruites · Micronutrition · Médecine fonctionnelle</p>
   <div class="tags">
-    <span class="tag t1">🔍 Gemini · Extraction</span>
-    <span class="tag t2">✨ Grok-3 · Synthèse & Chat</span>
+    <span class="tag t1">🔍 Gemini · Extraction exhaustive</span>
+    <span class="tag t2">✨ Grok-3 · Reconstruction causale</span>
   </div>
 </div>""", unsafe_allow_html=True)
 
@@ -404,7 +516,7 @@ fiche_ctx = (st.session_state.results or {}).get("final_fiche", "") or ""
 render_sidebar(st.session_state.doc_text or "", fiche_ctx)
 
 # Tabs
-tab1, tab2, tab3 = st.tabs(["📁 Import & Génération", "📋 Fiche Finale", "🔬 Détails"])
+tab1, tab2, tab3 = st.tabs(["📁 Import & Génération", "📋 Fiche Reconstruite", "🔬 Détails extraction"])
 
 # ── TAB 1 ─────────────────────────────────────────────────────────────────────
 with tab1:
@@ -437,7 +549,7 @@ with tab1:
     if st.session_state.doc_text:
         col, _ = st.columns([2, 3])
         with col:
-            go = st.button("🚀 Générer la Fiche Médicale", type="primary", use_container_width=True)
+            go = st.button("🚀 Générer la Fiche Reconstruite", type="primary", use_container_width=True)
 
         if go:
             bar    = st.progress(0.0)
@@ -446,8 +558,8 @@ with tab1:
 
             def _show_cards(active: int) -> None:
                 agents = [
-                    ("c1", "🔍", "Agent 1 — Gemini", "Extraction OCR + schémas"),
-                    ("c2", "✨", "Agent 2 — Grok-3", "Synthèse fiche complète 10 points"),
+                    ("c1", "🔍", "Agent 1 — Gemini", "Extraction exhaustive (zéro perte)"),
+                    ("c2", "✨", "Agent 2 — Grok-3", "Reconstruction causale + micronutrition"),
                 ]
                 html = ""
                 for i, (cls, ico, lbl, sub) in enumerate(agents, 1):
@@ -459,7 +571,7 @@ with tab1:
             try:
                 # Agent 1 — Gemini extraction
                 bar.progress(0.05)
-                status.info("🔍 Agent 1 — Gemini extrait le corpus...")
+                status.info("🔍 Agent 1 — Gemini extrait le corpus (exhaustif, zéro perte)...")
                 _show_cards(1)
                 ext = GeminiAgent().extract(st.session_state.doc_text)
 
@@ -474,7 +586,7 @@ with tab1:
 
                 # Agent 2 — Grok-3 synthèse
                 bar.progress(0.5)
-                status.info("✨ Agent 2 — Grok-3 rédige la fiche complète...")
+                status.info("✨ Agent 2 — Grok-3 reconstruit la fiche (causale + micronutrition)...")
                 _show_cards(2)
                 final = GrokAgent().synthesize(ext, title)
 
@@ -485,7 +597,7 @@ with tab1:
                     "final_fiche": final,
                     "title": title,
                 }
-                status.success("🎉 Terminé ! Consultez l'onglet **Fiche Finale**.")
+                status.success("🎉 Terminé ! Consultez l'onglet **Fiche Reconstruite**.")
 
             except Exception as e:
                 status.error(f"❌ Erreur : {e}")
@@ -503,7 +615,7 @@ with tab2:
             st.download_button("⬇️ .md", data=res["final_fiche"],
                 file_name=f"fiche_{res['title']}.md", mime="text/markdown",
                 use_container_width=True)
-        st.markdown('<div class="badge">🤖 Gemini · Grok-3</div>', unsafe_allow_html=True)
+        st.markdown('<div class="badge">🔍 Gemini (extraction) · ✨ Grok-3 (reconstruction causale)</div>', unsafe_allow_html=True)
         st.divider()
         render_latex(res["final_fiche"])
 
@@ -515,5 +627,5 @@ with tab3:
         res = st.session_state.results
         with st.expander("🔍 Agent 1 — Extraction Gemini (JSON brut)", expanded=False):
             st.markdown(res["extracted_data"])
-        with st.expander("✨ Agent 2 — Fiche Finale Grok-3", expanded=True):
+        with st.expander("✨ Agent 2 — Fiche Reconstruite Grok-3", expanded=True):
             render_latex(res["final_fiche"])
